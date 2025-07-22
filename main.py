@@ -197,7 +197,7 @@ class minutiaExtractor:
             for j in range(1, y, self.block):
                 radian = np.sum(self.mask[j - 1:j + self.block, i-1:i+self.block])
                 if radian > mask_threshold:
-                    tang = math.tan(self.angle_gabor[(j - 1) // self.block][(i - 1) // W])
+                    tang = math.tan(self.angle_gabor[(j - 1) // self.block][(i - 1) // self.block])
                     (begin, end) = minutiaExtractor.get_line_ends(i, j, self.block, tang)
                     cv2.line(result, begin, end, color=150)
 
@@ -432,7 +432,7 @@ class minutiaExtractor:
 
 fingerprint = minutiaLoader(r"C:\Users\kound\OneDrive\Desktop\finger-50classes\004\L\004_L3_4.bmp")
 
-extractor = minutiaExtractor(self.normalised_img,self.segmented_img,self.norm_img,self.mask,self.block)
+
 plt.figure(figsize=(9, 3))
 
 plt.subplot(1,3,1)
