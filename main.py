@@ -21,7 +21,7 @@ class minutiaLoader:  # will only handle loading of the minutia, segmentation
         type-> bifurcation or a ridge
         '''
         self.img_path = img_path
-        self.block = 13
+        self.block = 16
 
         self.img= self.load()
         self.normalised_img= self.normalise(self.img)
@@ -33,7 +33,7 @@ class minutiaLoader:  # will only handle loading of the minutia, segmentation
         img = cv2.imread(self.img_path,0) # image is already loaded in grayscale
         if img is None:
             raise ValueError(f"Could not load image from {self.img_path}")
-        img = cv2.resize(img,(96,96))
+        #img = cv2.resize(img,(96,96))
         return img
     
     # normalise the image
@@ -90,6 +90,8 @@ class minutiaExtractor:
         self.y_cord = None
         self.angle_minutia = None
         self.type = None
+        self.gabor_img=None
+        self.skeleton = None
 
 
         self.block = block
@@ -99,10 +101,7 @@ class minutiaExtractor:
         self.mask = mask
         self.angle_gabor=[] # required for gabor filters
         self.freq=[]
-        self.gabor_img=None
-        self.skeleton = None
-
-    # for gabor filters
+    
     def angleCalculation(self,smooth=False):
         j1 = lambda x, y: 2 * x * y
         j2 = lambda x, y: x ** 2 - y ** 2
@@ -148,7 +147,7 @@ class minutiaExtractor:
             result = minutiaExtractor.smooth_angles(result)
 
         self.angle_gabor = result
-        return result
+        return self.angle_gabor
     @staticmethod
     def gauss(x, y):
         sigma_ = 1.0
@@ -193,18 +192,24 @@ class minutiaExtractor:
         (y, x) = self.segmented_img.shape
         result = cv2.cvtColor(np.zeros(self.segmented_img.shape, np.uint8), cv2.COLOR_GRAY2RGB)
         mask_threshold = (self.segmented_img-1)**2
-        for i in range(1, x, self.segmented_img):
+        for i in range(1, x, self.block):
             for j in range(1, y, self.block):
                 radian = np.sum(self.mask[j - 1:j + self.block, i-1:i+self.block])
                 if radian > mask_threshold:
                     tang = math.tan(self.angle_gabor[(j - 1) // self.block][(i - 1) // self.block])
-                    (begin, end) = minutiaExtractor.get_line_ends(i, j, self.block, tang)
+                    (begin, end) = minutiaExtractor.get_line_ends(i, j, tang)
                     cv2.line(result, begin, end, color=150)
 
         cv2.resize(result, self.segmented_img.shape, result)
         return result
     
 
+
+    
+   
+
+
+    # for gabor filters
                 #self.normim,sel.mask,self.angle_gabor,self.block
     #freq = ridge_freq(normim, mask, angles, block_size, kernel_size=5, minWaveLength=5, maxWaveLength=15)
     def ridge_freq(self,kernel_size=5, minWaveLength=5, maxWaveLength=15):
@@ -228,7 +233,7 @@ class minutiaExtractor:
         non_zero_elems_in_freq = freq_1d[0][ind]
         medianfreq = np.median(non_zero_elems_in_freq) * self.mask
         self.freq=medianfreq
-        return medianfreq
+        return self.freq
     
     @staticmethod
     def frequest(im, orientim, kernel_size, minWaveLength, maxWaveLength):
@@ -428,26 +433,47 @@ class minutiaExtractor:
         return "none"
     
 
+    def fingerprintPipeline(self):
+       gabor_angles=self.angleCalculation()
+       freq = self.ridge_freq()
+       gbr_img = self.gabor_filter()
+       img_thin = self.skeletonize()
+       plt.imshow(img_thin)
+       return  gabor_angles, freq, gbr_img, img_thin
 
 
-fingerprint = minutiaLoader(r"C:\Users\kound\OneDrive\Desktop\finger-50classes\004\L\004_L3_4.bmp")
+
+    
 
 
+
+fingerprint = minutiaLoader(r"C:\Users\kound\OneDrive\Desktop\finger-50classes\044\R\044_R2_0.bmp")
+
+#normalised_img,segmented_img, norm_img, mask,block
+ 
+extracted = minutiaExtractor(fingerprint.normalised_img,fingerprint.segmented_img,fingerprint.norm_img,fingerprint.mask,fingerprint.block)
+extracted.fingerprintPipeline()
 plt.figure(figsize=(9, 3))
 
-plt.subplot(1,3,1)
+plt.subplot(2,3,1)
 plt.imshow(fingerprint.segmented_img,cmap="gray")
 
-plt.subplot(1,3,2)
+plt.subplot(2,3,2)
 plt.imshow(fingerprint.norm_img,cmap="gray")
 
 
-plt.subplot(1,3,3)
+plt.subplot(2,3,3)
 plt.imshow(fingerprint.mask,cmap="gray")
 plt.show()
 
+
+plt.subplot(2,3,4)
+plt.imshow(extracted.gabor_img,cmap="gray")
+
+plt.subplot(2,3,5)
+plt.imshow(extracted.skeleton,cmap="gray")
+
+
+
+
 plt.tight_layout()
-
-
-plt.subplot(1,3,3)
-plt.imshow(fingerprint.mask,cmap="gray")
