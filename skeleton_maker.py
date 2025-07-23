@@ -364,7 +364,7 @@ class skeleton_maker:
        freq = self.ridge_freq()
        gbr_img = self.gabor_filter()
        img_thin = self.skeletonize()
-       plt.imshow(img_thin)
+       #plt.imshow(img_thin)
        return  gabor_angles, freq, gbr_img, img_thin
 
 

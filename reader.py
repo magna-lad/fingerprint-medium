@@ -30,4 +30,4 @@ def load_users(data_dir):
 
         users[uid] = {'finger': user_img} #list of users with fingers array representation
     
-    return all_images
+    return users
