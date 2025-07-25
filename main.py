@@ -59,7 +59,7 @@ def save_users_dictionary(users, filename="processed_skeletons.pkl"):
     return filepath
 
 def main():
-    data_dir = r"C:\Users\kound\OneDrive\Desktop\10Classes"
+    data_dir = r"C:\Users\kound\OneDrive\Desktop\10Classes\5classes"
     
     # Step 1: Load or process skeleton data
     print("Checking for cached skeleton data...")
@@ -81,7 +81,7 @@ def main():
                         fingerprint.segmented_img,
                         fingerprint.norm_img,
                         fingerprint.mask,
-                        fingerprint.block
+                        fingerprint.block,
                     )
                     
                     # Process skeleton
@@ -89,10 +89,16 @@ def main():
                     
                     # Replace original with processed skeleton
                     users[user_id]['finger'][idx] = skeleton_image.skeleton
+                    # Initialize 'minutiae' list if not already present
+                    if 'minutiae' not in users[user_id]:
+                        users[user_id]['minutiae'] = [None] * len(users[user_id]['finger'])
+
+                    # Store extracted minutiae
+                    users[user_id]['minutiae'][idx] = skeleton_image.minutiae_list
                     
                 except Exception as e:
                     print(f"Error processing user {user_id}: {e}")
-        
+        print(users)
         # Save processed skeleton data
         save_users_dictionary(users, "processed_skeletons.pkl")
         

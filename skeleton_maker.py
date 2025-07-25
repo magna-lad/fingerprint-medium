@@ -3,7 +3,6 @@ import cv2
 import torch
 import math
 import scipy.ndimage
-from sklearn.metrics import roc_curve, auc, accuracy_score
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -18,11 +17,11 @@ class skeleton_maker:
     def __init__(self,normalised_img,segmented_img, norm_img, mask,block):
         self.x_cord = None
         self.y_cord = None
-        self.angle_minutia = None
+        self.angle_minutiae = None
         self.type = None
         self.gabor_img=None
         self.skeleton = None
-
+        self.minutiae_list = []
 
         self.block = block
         self.normalised_img = normalised_img
@@ -302,7 +301,7 @@ class skeleton_maker:
         biniry_image = biniry_image.astype(np.int8)
 
         (y, x) = self.skeleton.shape
-        result = cv2.cvtColor(self.gabor_img, cv2.COLOR_GRAY2RGB)
+        result = cv2.cvtColor(self.skeleton, cv2.COLOR_GRAY2RGB)
         colors = {"ending" : (150, 0, 0), "bifurcation" : (0, 150, 0)}
 
         # iterate each pixel minutia
@@ -310,9 +309,57 @@ class skeleton_maker:
             for j in range(1, y - kernel_size//2):
                 minutiae = skeleton_maker.minutiae_at(biniry_image, j, i, kernel_size)
                 if minutiae != "none":
-                        cv2.circle(result, (i,j), radius=2, color=colors[minutiae], thickness=2)
-            return result
+                        cv2.circle(result, (i,j), radius=3, color=colors[minutiae], thickness=2)
+                        self.y_cord,self.x_cord = i,j
+                        self.type = minutiae
+                        self.angle_minutiae = self.orientation(j,i) # to these coordinates of the image we will find the angle of orientation via sobel operators on the skeleton image
+                        length = 10  # length of angle line
+                        end_x = int(i + length * math.cos(self.angle_minutiae))
+                        end_y = int(j + length * math.sin(self.angle_minutiae))
+                        cv2.line(result, (i, j), (end_x, end_y), color=colors[minutiae], thickness=2)
+                        self.minutiae_list.append([(self.y_cord,self.x_cord),self.type,self.angle_minutiae])
+
+        
+        #print(self.minutiae_list)
+        self.with_minutiaes = result
+        return result
     
+
+    def orientation(self,j,i, block_size = 10):
+
+        j1 = lambda x, y: 2 * x * y
+        j2 = lambda x, y: x ** 2 - y ** 2
+        j3 = lambda x, y: x ** 2 + y ** 2
+
+        h,w = self.skeleton.shape
+
+        sobelOp = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]
+
+        ySobel = np.array(sobelOp).astype(np.int_)
+        xSobel = np.transpose(ySobel).astype(np.int_)
+
+        Gx_ = cv2.filter2D(self.skeleton,-1, ySobel)
+        Gy_ = cv2.filter2D(self.skeleton,-1, xSobel)
+
+                # entering the img via pixel
+        nominator = 0
+        denominator = 0
+        # convolving the block of the image with sobel operators
+        for l in range(j, min(j + block_size, h - 1)):
+            for k in range(i, min(i + block_size , w - 1)):
+                Gx = round(Gx_[l, k])  # horizontal gradients at l, k
+                Gy = round(Gy_[l, k])  # vertial gradients at l, k
+                nominator += j1(Gx, Gy)
+                denominator += j2(Gx, Gy)
+        if nominator or denominator:
+            angle = (math.pi + math.atan2(nominator, denominator)) / 2
+            return angle
+        else:
+            return 0
+
+
+
+
     @staticmethod
     def minutiae_at(pixels, i, j, kernel_size):
         """
@@ -342,7 +389,7 @@ class skeleton_maker:
                       (2, -1), (2, -2), (1, -2), (0, -2), (-1, -2), (-2, -2)]           # p7 p6   p5
 
             values = [pixels[i + l][j + k] for k, l in cells]
-
+            #print(values)
             # count crossing how many times it goes from 0 to 1
             crossings = 0
             for k in range(0, len(values)-1):
@@ -359,12 +406,17 @@ class skeleton_maker:
         return "none"
     
 
+    
     def fingerprintPipeline(self):
        gabor_angles=self.angleCalculation()
        freq = self.ridge_freq()
        gbr_img = self.gabor_filter()
        img_thin = self.skeletonize()
-       #plt.imshow(img_thin)
-       return  gabor_angles, freq, gbr_img, img_thin
+       minutiaes= self.calculate_minutiaes()
+       #border_minutiaes_rmv = self.remove_near_border()
+       #plt.imshow(minutiaes)
+       #plt.imshow(minutiaes)
+       plt.show()
+       return  gabor_angles, freq, gbr_img, img_thin,minutiaes
 
 

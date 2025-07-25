@@ -1,37 +1,25 @@
 import pickle
-import os
-import matplotlib.pyplot as plt
 
-def load_users_dictionary(filename="processed_skeletons.pkl"):
-    """Load the saved users dictionary"""
+# Path to your pickle file
+file_path = r"C:\Users\kound\OneDrive\Desktop\fingerprint_mine\biometric_cache\processed_skeletons.pkl"
+
+# Load the contents
+with open(file_path, 'rb') as f:
+    data = pickle.load(f)
+
+# Now you can inspect the structure
+print(type(data))               # e.g. dict
+print(len(data))                # Number of users
+
+# Example: Print first user ID and its data
+for user_id, user_data in data.items():
+    print("User ID:", user_id)
+    print("Keys:", user_data.keys())  # Should include 'finger', maybe 'minutiae'
     
-    cache_dir = "biometric_cache"
-    filepath = os.path.join(cache_dir, filename)
+    print(f"Number of fingerprint images: {len(user_data['finger'])}")
     
-    # Check if file exists
-    if not os.path.exists(filepath):
-        print(f"File not found: {filepath}")
-        return None
+    # If minutiae exists
+    if 'minutiae' in user_data:
+        print(f"Number of minutiae lists: {len(user_data['minutiae'])}")
     
-    try:
-        # Load with pickle
-        with open(filepath, 'rb') as f:
-            users = pickle.load(f)
-        
-        print(f"Users dictionary loaded successfully!")
-        print(f"Location: {filepath}")
-        print(f"Users loaded: {len(users)}")
-        
-        # Verify structure and show summary
-        total_skeletons = sum(len(finger_data['finger']) for finger_data in users.values())
-        print(f"Total skeletons: {total_skeletons}")
-        
-        return users
-        
-    except Exception as e:
-        print(f"Error loading file: {e}")
-        return None
-    
-users = load_users_dictionary()
-plt.imshow(users['009']['finger'][0])
-plt.show()
+    break  # Remove this if you want to loop over all users
