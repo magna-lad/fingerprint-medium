@@ -3,14 +3,14 @@ from minutia_loader import minutiaLoader
 from skeleton_maker import skeleton_maker
 from reader import load_users
 from tqdm import tqdm
-from minutiaeExtractor import minutiaeExtractor
+#from minutiaeExtractor import minutiaeExtractor
 from roc_scores import perform_roc_analysis
 import pickle
 import os
 from datetime import datetime
 from minutiae_filter import minutiae_filter
 
-def load_users_dictionary(filename="processed_skeletons.pkl"):
+def load_users_dictionary(filename):
     """Load the saved users dictionary"""
     
     cache_dir = "biometric_cache"
@@ -40,7 +40,7 @@ def load_users_dictionary(filename="processed_skeletons.pkl"):
         print(f"Error loading file: {e}")
         return None
 
-def save_users_dictionary(users, filename="processed_skeletons.pkl"):
+def save_users_dictionary(users, filename):
     """Save the processed users dictionary"""
     
     # Create directory if it doesn't exist
@@ -112,84 +112,59 @@ def main():
         print("Using cached skeleton data - skipping skeleton generation.")
     
 
+
+
+
+    
     #filter the minutiaes    
-    processed_users = {}
+    processed_users = load_users_dictionary("processed_minutiae_data.pkl")
 
-    for user_id, image_dic in tqdm(users.items(), desc="Filtering users"):
-        fingerprint_list = image_dic['finger']     # List of 40 skeletons
-        minutiae_list = image_dic['minutiae']      # List of 40 minutiae sets
-        mask_list = image_dic['mask']
+    if processed_users is None:
+        print("No processed users data found. Processing from scratch...")
+        
+        processed_users = {}
 
-        mf = minutiae_filter(fingerprint_list, minutiae_list,mask_list)
-        filtered_fingers, filtered_minutiae = mf.filter_all() # add parameters min_distance=5, border_margin=10
+        try:
+            for user_id, image_dic in tqdm(users.items(), desc="Filtering users"):
+                fingerprint_list = image_dic['finger']     # List of 40 skeletons
+                minutiae_list = image_dic['minutiae']      # List of 40 minutiae sets
+                mask_list = image_dic['mask']
 
-        processed_users[user_id] = {
-            'finger': filtered_fingers,
-            'minutiae': filtered_minutiae
-        }
+                mf = minutiae_filter(fingerprint_list, minutiae_list,mask_list)
+                filtered_fingers, filtered_minutiae = mf.filter_all() # add parameters min_distance=5, border_margin=10
+
+                processed_users[user_id] = {
+                    'finger': filtered_fingers,
+                    'minutiae': filtered_minutiae
+                }
+
+            #print(processed_users)
+            # save to disk
+            save_users_dictionary(processed_users, "processed_minutiae_data.pkl")
+        except Exception as e:
+            print(f"Error processing user : {e}")
+
+    else:
+        print("Using processed minutiae data - skipping minutiae filtering.")
+        
 
 
-    # Save to disk
-    with open("processed_minutiae_data.pkl", "wb") as f:
-        pickle.dump(processed_users, f)
-
-    print("Filtered minutiae and skeletons saved to processed_minutiae_data.pkl ✅")
-
-
-
-
-
-    
-
-#
-    ## Step 2: Load or extract minutiae data
-    #print("\nChecking for cached minutiae data...")
-    #users_with_minutiae = load_users_dictionary("processed_minutiae_data.pkl")
-    #
-#
-    #if users_with_minutiae is None:
-    #    print("No cached minutiae data found. Extracting minutiae from skeletons...")
-    #    
-    #    # Extract minutiae from skeletons
-    #    for user_id, finger_dic in tqdm(users.items(), desc="Extracting minutiae"):
-    #        minutiae_list = []  # Store minutiae for this user
-    #        
-    #        for idx, skeleton_image in enumerate(finger_dic['finger']):
-    #            try:
-    #                minutiae_extractor = minutiaeExtractor(skeleton_image)
-    #                minutiae_points = minutiae_extractor.extract()
-    #                minutiae_list.append(minutiae_points)
-    #                
-    #            except Exception as e:
-    #                print(f"Error extracting minutiae for user {user_id}, image {idx}: {e}")
-    #                minutiae_list.append([])  # Empty list for failed extractions
-    #        
-    #        # Store minutiae data alongside skeleton data
-    #        users[user_id]['minutiae'] = minutiae_list
-    #    
-    #    # Save the complete data (skeletons + minutiae)
-    #    save_users_dictionary(users, "processed_with_minutiae.pkl")
-    #    
-    #    # Use the newly processed data
-    #    final_users_data = users
-    #    
-    #else:
-    #    print("Using cached minutiae data - skipping minutiae extraction.")
-    #    # Use the cached data that already contains minutiae
-    #    final_users_data = users_with_minutiae
-    
     # Step 3: Display processing summary
+    users_filtered = load_users_dictionary("processed_minutiae_data.pkl")
+    #print(users_filtered)
     print("\n=== Processing Summary ===")
     total_images = 0
     total_minutiae = 0
     
-    for user_id, user_data in processed_users.items():
+    for user_id, user_data in users_filtered.items():
         user_images = len(user_data['finger'])
         user_minutiae = sum(len(minutiae) for minutiae in user_data.get('minutiae', []))
         total_images += user_images
         total_minutiae += user_minutiae
         print(f"User {user_id}: {user_images} images, {user_minutiae} total minutiae")
     
+
+
     print(f"\nOverall: {total_images} images processed, {total_minutiae} total minutiae extracted")
     
     # Step 4: Perform ROC analysis
@@ -197,14 +172,14 @@ def main():
     print("PERFORMING ROC ANALYSIS")
     print("="*50)
     
-    roc_analyzer = perform_roc_analysis(processed_users)  # Use correct dataset
+    roc_analyzer = perform_roc_analysis(users_filtered)  # Use correct dataset
     
     # Save ROC results
     metrics = roc_analyzer.get_performance_metrics()
     
     # Save detailed results
     results_summary = {
-        'users_processed': len(processed_users),
+        'users_processed': len(users_filtered),
         'performance_metrics': metrics,
         'genuine_scores': roc_analyzer.genuine_scores,
         'impostor_scores': roc_analyzer.impostor_scores,

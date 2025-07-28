@@ -12,7 +12,18 @@ class MinutiaeROCAnalyzer:
         Initialize ROC analyzer for minutiae-based fingerprint recognition
         
         Args:
-            users_data: Dictionary with user minutiae data
+            users_data: Dictionary with user minutiae data 
+            {
+            user1:{
+                'finger':finger1,finger2,.....,
+                'minutiae':minutiae1,minutiae2,...
+                },
+            user2:{
+                'finger':finger1,finger2,.....,
+                'minutiae':minutiae1,minutiae2,...
+                }
+            
+                
             distance_threshold: Maximum distance for minutiae matching (pixels)
             angle_threshold: Maximum angle difference for minutiae matching (degrees)
         """
@@ -28,7 +39,7 @@ class MinutiaeROCAnalyzer:
         Calculate similarity between two sets of minutiae points
         
         Args:
-            minutiae1, minutiae2: Lists of tuples (x, y, angle, type)
+            minutiae1, minutiae2: Lists of tuples [(x, y), type, angle}
             
         Returns:
             Similarity score (0-1, higher = more similar)
@@ -41,12 +52,12 @@ class MinutiaeROCAnalyzer:
         m2 = np.array(minutiae2)
         
         # Extract coordinates, angles, and types
-        coords1 = m1[:, :2].astype(float)
-        coords2 = m2[:, :2].astype(float)
-        angles1 = m1[:, 2].astype(float)
-        angles2 = m2[:, 2].astype(float)
-        types1 = m1[:, 3].astype(int)
-        types2 = m2[:, 3].astype(int)
+        coords1 = (m1[0][0].astype(float))
+        coords2 = (m2[0][0].astype(float))
+        angles1 = (m1[2].astype(float))
+        angles2 = (m2[2].astype(float))
+        types1 = (m1[1].astype(int))
+        types2 = (m2[1].astype(int))
         
         matches = 0
         total_possible = min(len(minutiae1), len(minutiae2))
@@ -91,6 +102,10 @@ class MinutiaeROCAnalyzer:
         similarity = matches / max(len(minutiae1), len(minutiae2))
         return similarity
     
+
+
+
+
     def calculate_advanced_similarity(self, minutiae1, minutiae2):
         """
         Advanced similarity calculation using spatial relationships
@@ -108,6 +123,10 @@ class MinutiaeROCAnalyzer:
         final_score = 0.7 * basic_sim + 0.3 * spatial_sim
         return final_score
     
+
+
+
+
     def analyze_spatial_relationships(self, minutiae1, minutiae2):
         """
         Analyze spatial relationships between minutiae points
@@ -150,6 +169,9 @@ class MinutiaeROCAnalyzer:
         
         return similar_patterns / total_patterns
     
+
+
+
     def compute_all_scores(self, use_advanced=True):
         """
         Compute all genuine and impostor scores
@@ -203,6 +225,11 @@ class MinutiaeROCAnalyzer:
         print(f"Computed {len(self.genuine_scores)} genuine scores")
         print(f"Computed {len(self.impostor_scores)} impostor scores")
     
+
+
+
+
+
     def generate_roc_curve(self):
         """
         Generate ROC curve data
@@ -231,6 +258,8 @@ class MinutiaeROCAnalyzer:
         
         return self.roc_data
     
+
+
     def calculate_eer(self):
         """
         Calculate Equal Error Rate (EER)
@@ -248,6 +277,37 @@ class MinutiaeROCAnalyzer:
         
         return eer
     
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     def plot_roc_curve(self, save_path=None):
         """
         Plot ROC curve
