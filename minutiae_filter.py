@@ -17,6 +17,8 @@ class minutiae_filter:
             h, w = img.shape
             filtered = []
 
+            
+
             # Step 1: Binarize mask
             mask_bin = (mask > 0).astype(np.uint8)
 
@@ -40,6 +42,13 @@ class minutiae_filter:
 
             for pt in minutiae:  # [(x, y), type, angle]
                 x, y = pt[0]
+
+                # setting type: 'bifurcation'-1
+                        #   'ending'-0  
+                if pt[1] == 'bifurcation':
+                    pt[1] =1
+                elif pt[1] == 'ending':
+                    pt[1] = 0
 
                 # Skip if out of bounds
                 if not (0 <= x < w and 0 <= y < h):
@@ -70,7 +79,8 @@ class minutiae_filter:
                 angle_ok = self._is_orientation_consistent(pt, minutiae, angle_threshold)
                 if not angle_ok:
                     continue
-
+                
+               
                 filtered.append(pt)
 
             filtered_fingers.append(img)

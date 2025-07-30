@@ -32,7 +32,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Load the data
-file_path = r"C:\Users\kound\OneDrive\Desktop\fingerprint_mine\processed_minutiae_data.pkl"
+file_path = r"C:\Users\kound\OneDrive\Desktop\fingerprint_mine\biometric_cache\processed_minutiae_data.pkl"
 
 with open(file_path, 'rb') as f:
     data = pickle.load(f)
@@ -44,23 +44,23 @@ for user_id, user_data in data.items():
     # Get the first skeleton and its minutiae
     skeleton = user_data['finger'][1]
     minutiae = user_data['minutiae'][1]  # list of (x, y)
-    
+    print(minutiae)
     # Convert skeleton to BGR for color drawing
-    if len(skeleton.shape) == 2:
-        skeleton_bgr = cv2.cvtColor(skeleton, cv2.COLOR_GRAY2BGR)
-    else:
-        skeleton_bgr = skeleton.copy()
+    #if len(skeleton.shape) == 2:
+    #    skeleton_bgr = cv2.cvtColor(skeleton, cv2.COLOR_GRAY2BGR)
+    #else:
+    #    skeleton_bgr = skeleton.copy()
 
     # Draw red circles for minutiae
-    for pt in minutiae:
-        x, y = pt[0]
-        cv2.circle(skeleton_bgr, (int(x), int(y)), radius=2, color=(0, 0, 255), thickness=-1)  # red dot
+    #for pt in minutiae:
+    #    x, y = pt[0]
+    #    cv2.circle(skeleton_bgr, (int(x), int(y)), radius=2, color=(0, 0, 255), thickness=-1)  # red dot
 
     # Display using matplotlib
-    plt.figure(figsize=(6, 6))
-    plt.imshow(cv2.cvtColor(skeleton_bgr, cv2.COLOR_BGR2RGB))
-    plt.title(f"User {user_id} - Minutiae on Skeleton")
-    plt.axis('off')
-    plt.show()
+    #plt.figure(figsize=(6, 6))
+    #plt.imshow(cv2.cvtColor(skeleton_bgr, cv2.COLOR_BGR2RGB))
+    #plt.title(f"User {user_id} - Minutiae on Skeleton")
+    #plt.axis('off')
+    #plt.show()
     
       # Remove to process all users

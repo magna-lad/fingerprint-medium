@@ -4,7 +4,7 @@ from skeleton_maker import skeleton_maker
 from reader import load_users
 from tqdm import tqdm
 #from minutiaeExtractor import minutiaeExtractor
-from roc_scores import perform_roc_analysis
+from roc_scores import MinutiaeROCAnalyzer
 import pickle
 import os
 from datetime import datetime
@@ -60,7 +60,7 @@ def save_users_dictionary(users, filename):
     return filepath
 
 def main():
-    data_dir = r"C:\Users\kound\OneDrive\Desktop\10Classes\5classes"
+    data_dir = r"C:\Users\kound\OneDrive\Desktop\finger-101classes"
     
     # Step 1: Load or process skeleton data
     print("Checking for cached skeleton data...")
@@ -164,36 +164,49 @@ def main():
         print(f"User {user_id}: {user_images} images, {user_minutiae} total minutiae")
     
 
-
+    #print(users_filtered.values())
     print(f"\nOverall: {total_images} images processed, {total_minutiae} total minutiae extracted")
     
     # Step 4: Perform ROC analysis
     print("\n" + "="*50)
     print("PERFORMING ROC ANALYSIS")
     print("="*50)
+#    
     
-    roc_analyzer = perform_roc_analysis(users_filtered)  # Use correct dataset
-    
-    # Save ROC results
-    metrics = roc_analyzer.get_performance_metrics()
-    
-    # Save detailed results
-    results_summary = {
-        'users_processed': len(users_filtered),
-        'performance_metrics': metrics,
-        'genuine_scores': roc_analyzer.genuine_scores,
-        'impostor_scores': roc_analyzer.impostor_scores,
-        'roc_data': roc_analyzer.roc_data
-    }
+
+    # now pass a new dictionary with user id as the key and minutiae as the items
+    # slice the users_filtered dictionary 
+    users_filtered_sliced = {}
+    for user_id, value_dic in users_filtered.items():
+        users_filtered_sliced[user_id] = {'minutiae': value_dic['minutiae']}
+
+    #print(users_filtered_sliced)
+    analyzer = MinutiaeROCAnalyzer(users_filtered_sliced,
+                                   distance_threshold=5,
+                                   angle_threshold=10,
+                                   match_threshold=3)
+    analyzer.compute_all_scores()
+    analyzer.generate_roc_curve()
+    analyzer.print_performance()
+    analyzer.plot_roc_curve()
+
+ 
+    #results_summary = {
+    #    'users_processed': len(users_filtered),
+    #    'performance_metrics': metrics,
+    #    'genuine_scores': roc_analyzer.genuine_scores,
+    #    'impostor_scores': roc_analyzer.impostor_scores,
+    #    'roc_data': roc_analyzer.roc_data
+    #}
     
     # Ensure directory exists and save results
-    os.makedirs('biometric_cache', exist_ok=True)
-    with open('biometric_cache/roc_analysis_results.pkl', 'wb') as f:
-        pickle.dump(results_summary, f)
-    
+    #os.makedirs('biometric_cache', exist_ok=True)
+    #with open('biometric_cache/roc_analysis_results.pkl', 'wb') as f:
+    #    pickle.dump(results_summary, f)
+    #
     print(f"\nROC analysis complete! Results saved to biometric_cache/")
     
-    return processed_users, roc_analyzer
+    return processed_users#, roc_analyzer
 
 if __name__ == '__main__':
     main()
