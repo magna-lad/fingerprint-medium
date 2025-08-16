@@ -4,7 +4,7 @@ from skeleton_maker import skeleton_maker
 from reader import load_users
 from tqdm import tqdm
 #from minutiaeExtractor import minutiaeExtractor
-from roc_scores import MinutiaeROCAnalyzer
+#from roc_scores import MinutiaeROCAnalyzer
 import pickle
 import os
 from datetime import datetime
@@ -180,15 +180,25 @@ def main():
     for user_id, value_dic in users_filtered.items():
         users_filtered_sliced[user_id] = {'minutiae': value_dic['minutiae']}
 
+    save_users_dictionary(users_filtered_sliced, "processedSliced_minutiae_data.pkl")
+
+    for user_id, user_data in users_filtered_sliced.items():
+        print("User ID:", user_id)
+
+        # Get the first skeleton and its minutiae
+        #skeleton = user_data['finger'][1]
+        minutiae = user_data['minutiae']  # list of (x, y)
+        print(len(minutiae))
+
     #print(users_filtered_sliced)
-    analyzer = MinutiaeROCAnalyzer(users_filtered_sliced,
-                                   distance_threshold=5,
-                                   angle_threshold=10,
-                                   match_threshold=3)
-    analyzer.compute_all_scores()
-    analyzer.generate_roc_curve()
-    analyzer.print_performance()
-    analyzer.plot_roc_curve()
+    #analyzer = MinutiaeROCAnalyzer(users_filtered_sliced,
+    #                               distance_threshold=5,
+    #                               angle_threshold=10,
+    #                               match_threshold=3)
+    #analyzer.compute_all_scores()
+    #analyzer.generate_roc_curve()
+    #analyzer.print_performance()
+    #analyzer.plot_roc_curve()
 
  
     #results_summary = {
