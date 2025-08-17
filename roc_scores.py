@@ -135,6 +135,30 @@ class MinutiaeROCAnalyzer:
     
         return np.array(feature_vectors)
     
+    # just to know the structure of the final dataset
+    def print_structure(self,data, max_depth=3, indent=0):
+        if max_depth == 0:
+            print('  ' * indent + '...')
+            return
+        if isinstance(data, dict):
+            print('  ' * indent + '{')
+            for k, v in data.items():
+                print('  ' * (indent + 1) + f'{repr(k)}:')
+                self.print_structure(v, max_depth - 1, indent + 2)
+            print('  ' * indent + '}')
+        elif isinstance(data, list):
+            print('  ' * indent + '[')
+            n = min(3, len(data))
+            for i in range(n):
+                self.print_structure(data[i], max_depth - 1, indent + 1)
+            if len(data) > n:
+                print('  ' * (indent + 1) + '...')
+            print('  ' * indent + ']')
+        elif hasattr(data, 'shape') and hasattr(data, 'dtype'):
+            print('  ' * indent + f'np.ndarray shape={data.shape} dtype={data.dtype}')
+        else:
+            print('  ' * indent + repr(data))
+
 
     def k_nearest_negihbors(self,k=5):
         '''
@@ -155,7 +179,34 @@ class MinutiaeROCAnalyzer:
                     feature_vectors = self.create_feature_vectors(finger, neighbors_indices, neighbors_distances, neighbors_relative_angles)
                     self.users_feature_vector[user_id][minutiae_head][finger_idx] = feature_vectors
 
-        print(self.users_feature_vector)
+        self.print_structure(self.users_feature_vector)
+
+
+
+def genuine_pairs_(self):
+    '''
+    input:
+    {
+        '000':
+          {
+            'minutiae':
+              [
+                [minutiae list for a fingerprint]
+                ...
+                ...
+                ...
+              ]
+          }
+    ........
+    }
+
+    output:
+
+    '''
+    
+    
+
+
 
 
 
