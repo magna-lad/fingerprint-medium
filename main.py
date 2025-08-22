@@ -18,6 +18,13 @@ def main():
     print("Checking for cached skeleton data...")
     users = load_users_dictionary("processed_skeletons.pkl")
     
+    '''
+    structure-
+
+    
+
+
+    '''
     
     if users is None:
         print("No cached skeleton data found. Processing from scratch...")
@@ -58,90 +65,92 @@ def main():
                 except Exception as e:
                     print(f"Error processing user {user_id}: {e}")
         # Save processed skeleton data
+        #print(users)
         save_users_dictionary(users, "processed_skeletons.pkl")
         
     else:
         print("Using cached skeleton data - skipping skeleton generation.")
     
+    print(users)
 
-
-
-
-    
-    #filter the minutiaes    
-    processed_users = load_users_dictionary("processed_minutiae_data.pkl")
-
-    if processed_users is None:
-        print("No processed users data found. Processing from scratch...")
-        
-        processed_users = {}
-
-        try:
-            for user_id, image_dic in tqdm(users.items(), desc="Filtering users"):
-                fingerprint_list = image_dic['finger']     # List of 40 skeletons
-                minutiae_list = image_dic['minutiae']      # List of 40 minutiae sets
-                mask_list = image_dic['mask']
-
-                mf = minutiae_filter(fingerprint_list, minutiae_list,mask_list)
-                filtered_fingers, filtered_minutiae = mf.filter_all() # add parameters min_distance=5, border_margin=10
-
-                processed_users[user_id] = {
-                    'finger': filtered_fingers,
-                    'minutiae': filtered_minutiae
-                }
-
-            #print(processed_users)
-            # save to disk
-            save_users_dictionary(processed_users, "processed_minutiae_data.pkl")
-        except Exception as e:
-            print(f"Error processing user : {e}")
-
-    else:
-        print("Using processed minutiae data - skipping minutiae filtering.")
-        
-
-
-    # Step 3: Display processing summary
-    users_filtered = load_users_dictionary("processed_minutiae_data.pkl")
-    #print(users_filtered)
-    print("\n=== Processing Summary ===")
-    total_images = 0
-    total_minutiae = 0
-    
-    for user_id, user_data in users_filtered.items():
-        user_images = len(user_data['finger'])
-        user_minutiae = sum(len(minutiae) for minutiae in user_data.get('minutiae', []))
-        total_images += user_images
-        total_minutiae += user_minutiae
-        print(f"User {user_id}: {user_images} images, {user_minutiae} total minutiae")
-    
-
-    #print(users_filtered.values())
-    print(f"\nOverall: {total_images} images processed, {total_minutiae} total minutiae extracted")
-    
-    # Step 4: Perform ROC analysis
-    print("\n" + "="*50)
-    print("PERFORMING ROC ANALYSIS")
-    print("="*50)
-#    
-    
-
-    # now pass a new dictionary with user id as the key and minutiae as the items
-    # slice the users_filtered dictionary 
-    users_filtered_sliced = {}
-    for user_id, value_dic in users_filtered.items():
-        users_filtered_sliced[user_id] = {'minutiae': value_dic['minutiae']}
-
-    save_users_dictionary(users_filtered_sliced, "processedSliced_minutiae_data.pkl")
-
-    for user_id, user_data in users_filtered_sliced.items():
-        print("User ID:", user_id)
-
-        # Get the first skeleton and its minutiae
-        #skeleton = user_data['finger'][1]
-        minutiae = user_data['minutiae']  # list of (x, y)
-        print(len(minutiae))
-
+#
+#
+#
+    #
+    ##filter the minutiaes    
+    #processed_users = load_users_dictionary("processed_minutiae_data.pkl")
+#
+    #if processed_users is None:
+    #    print("No processed users data found. Processing from scratch...")
+    #    
+    #    processed_users = {}
+#
+    #    try:
+    #        for user_id, image_dic in tqdm(users.items(), desc="Filtering users"):
+    #            fingerprint_list = image_dic['finger']     # List of 40 skeletons
+    #            minutiae_list = image_dic['minutiae']      # List of 40 minutiae sets
+    #            mask_list = image_dic['mask']
+#
+    #            mf = minutiae_filter(fingerprint_list, minutiae_list,mask_list)
+    #            filtered_fingers, filtered_minutiae = mf.filter_all() # add parameters min_distance=5, border_margin=10
+#
+    #            processed_users[user_id] = {
+    #                'finger': filtered_fingers,
+    #                'minutiae': filtered_minutiae
+    #            }
+#
+    #        #print(processed_users)
+    #        # save to disk
+    #        save_users_dictionary(processed_users, "processed_minutiae_data.pkl")
+    #    except Exception as e:
+    #        print(f"Error processing user : {e}")
+#
+    #else:
+    #    print("Using processed minutiae data - skipping minutiae filtering.")
+    #    
+#
+#
+    ## Step 3: Display processing summary
+    #users_filtered = load_users_dictionary("processed_minutiae_data.pkl")
+    ##print(users_filtered)
+    #print("\n=== Processing Summary ===")
+    #total_images = 0
+    #total_minutiae = 0
+    #
+    #for user_id, user_data in users_filtered.items():
+    #    user_images = len(user_data['finger'])
+    #    user_minutiae = sum(len(minutiae) for minutiae in user_data.get('minutiae', []))
+    #    total_images += user_images
+    #    total_minutiae += user_minutiae
+    #    print(f"User {user_id}: {user_images} images, {user_minutiae} total minutiae")
+    #
+#
+    ##print(users_filtered.values())
+    #print(f"\nOverall: {total_images} images processed, {total_minutiae} total minutiae extracted")
+    #
+    ## Step 4: Perform ROC analysis
+    #print("\n" + "="*50)
+    #print("PERFORMING ROC ANALYSIS")
+    #print("="*50)
+#   # 
+    #
+#
+    ## now pass a new dictionary with user id as the key and minutiae as the items
+    ## slice the users_filtered dictionary 
+    #users_filtered_sliced = {}
+    #for user_id, value_dic in users_filtered.items():
+    #    users_filtered_sliced[user_id] = {'minutiae': value_dic['minutiae']}
+#
+    #save_users_dictionary(users_filtered_sliced, "processedSliced_minutiae_data.pkl")
+#
+    #for user_id, user_data in users_filtered_sliced.items():
+    #    print("User ID:", user_id)
+#
+    #    # Get the first skeleton and its minutiae
+    #    #skeleton = user_data['finger'][1]
+    #    minutiae = user_data['minutiae']  # list of (x, y)
+    #    print(len(minutiae))
+#
     #print(users_filtered_sliced)
     #analyzer = MinutiaeROCAnalyzer(users_filtered_sliced,
     #                               distance_threshold=5,
@@ -166,9 +175,12 @@ def main():
     #with open('biometric_cache/roc_analysis_results.pkl', 'wb') as f:
     #    pickle.dump(results_summary, f)
     #
-    print(f"\nROC analysis complete! Results saved to biometric_cache/")
-    
-    return processed_users#, roc_analyzer
+
+
+    #*****
+    #print(f"\nROC analysis complete! Results saved to biometric_cache/")
+    #
+    #return processed_users#, roc_analyzer
 
 if __name__ == '__main__':
     main()
