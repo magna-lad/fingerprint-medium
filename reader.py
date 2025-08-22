@@ -2,56 +2,68 @@ import os
 import cv2
 from collections import defaultdict
 
-# initiate loading the users
-# returns path to the users
+#initiate loading the users
+#returns path to the users
 
 def load_users(data_dir):
     '''
-    expected input-
-    a folder containing several users with L and R folders containing images of fingers
-    with 5 impressions per finger
-    
-    output-
-    a dictionary of users with key- user id
-    item- for each user, a dictionary, will contain finger key with 
-                                                        item- a list with two nested lists for left and right
-                                                        each l and f folder contains nested list with each list containing
-                                                        minutiaes of impressions of the same finger
-        same structrure of masks of the image for preprocessing
+    expected input:
+        - a folder containing several users (000, 001, …)
+        - each user has "L" and "R" folders
+        - each hand folder contains images like 000_L0_0.bmp … 000_L3_4.bmp
+          (4 fingers × 5 impressions = 20 images)
+
+    output:
+        users = {
+            "000": {
+                "fingers": {
+                    "L": [ [impr1, impr2, impr3, impr4, impr5],   # finger 0
+                           [impr1, impr2, impr3, impr4, impr5],   # finger 1
+                           [impr1, impr2, impr3, impr4, impr5],   # finger 2
+                           [impr1, impr2, impr3, impr4, impr5] ], # finger 3
+                    "R": [ [...], [...], [...], [...] ]
+                }
+            },
+            ...
+        }
+    .....
+
+}
     '''
     users = {}
     for uid in os.listdir(data_dir):
         uid_path = os.path.join(data_dir, uid) # entering the numbered folders
         if not os.path.isdir(uid_path):  # error handling
             continue
-        
-        
-
+            
+        users[uid] = {"fingers": {}}
         for hand in ['L', 'R']: # folder structure
-            img=[]
+            img=[] 
             count=0
             hand_dir = os.path.join(uid_path, hand) 
             if not os.path.isdir(hand_dir):
                 continue
+            
             if os.path.isdir(hand_dir):
-                for f in os.listdir(hand_dir): # entering the L,R hand folder
-                    img_buffer=[]
-                    if f.lower().endswith(('.jpg', '.png', '.bmp', '.jpeg')) :
-                        continue    
+                images=[f for f in os.listdir(hand_dir) if f.lower().endswith(('.jpg', '.png', '.bmp'))]
+                images.sort()
 
-                    try :
-                        finger_idx=int(f(5))
-                    except (IndexError, ValueError):
-                        continue  # skip files that don't match pattern
-                    img_path = os.path.join(hand_dir, f)
-                    img = cv2.imread(img_path, 0)
+                finger_groups = []
+            for finger_id in range(4):  # assuming 4 fingers per hand
+                start = finger_id * 5
+                end = start + 5
+                group = []
 
-                    if img is not None:
-                        fingers[hand][finger_idx].append(img)
-                        #print(f[5])
-        if any(fingers[hand] for hand in ['L', 'R']):
-            # Optionally convert defaultdict to dict for JSON-serializability
-            users[uid] = {'fingers': {h: dict(fingers[h]) for h in fingers}}
+                for img_name in images[start:end]:
+                    img_path = os.path.join(hand_dir, img_name)
+
+                    # Or load with cv2:
+                    img = cv2.imread(img_path, 0)  # grayscale
+                    group.append(img)
+
+                finger_groups.append(group)
+                users[uid]["fingers"][hand] =  finger_groups
+                #print(uid, hand, images)   
     print(users)
     return users
 
