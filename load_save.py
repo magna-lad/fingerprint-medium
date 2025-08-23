@@ -24,8 +24,9 @@ def load_users_dictionary(filename,calc_roc=False):
         
         if calc_roc == False:
             # Verify structure and show summary
-            total_skeletons = sum(len(finger_data['finger']) for finger_data in users.values())
-            print(f"Total skeletons: {total_skeletons}")
+            total_skeletons1 = sum(len(finger_data['fingers']["L"]) for finger_data in users.values())
+            total_skeletons2= sum(len(finger_data['fingers']["R"]) for finger_data in users.values())
+            print(f"Total skeletons: {total_skeletons1+total_skeletons2}")
 
             return users
         

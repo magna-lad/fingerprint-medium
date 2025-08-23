@@ -64,8 +64,5 @@ def load_users(data_dir):
                 finger_groups.append(group)
                 users[uid]["fingers"][hand] =  finger_groups
                 #print(uid, hand, images)   
-    print(users)
+    #print(users)
     return users
-
-load_users(r"C:\Users\kound\OneDrive\Desktop\10Classes\5classes")
-

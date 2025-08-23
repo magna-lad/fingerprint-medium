@@ -20,10 +20,18 @@ def main():
     
     '''
     structure-
-
-    
-
-
+    users = {
+            "000": {
+                "fingers": {
+                    "L": [ [impr1, impr2, impr3, impr4, impr5],   # finger 0
+                           [impr1, impr2, impr3, impr4, impr5],   # finger 1
+                           [impr1, impr2, impr3, impr4, impr5],   # finger 2
+                           [impr1, impr2, impr3, impr4, impr5] ], # finger 3
+                    "R": [ [...], [...], [...], [...] ]
+                }
+            },
+            ...
+        }
     '''
     
     if users is None:
@@ -31,39 +39,35 @@ def main():
         
         # Load original data
         users = load_users(data_dir)
-        
+        #print(users)
         # Process skeletons - Fixed loop structure
-        for user_id, finger_dic in tqdm(users.items(), desc="Processing users"):
-            for idx, image in enumerate(finger_dic['finger']):  # Fixed: direct access
-                try:
-                    fingerprint = minutiaLoader(image)
-                    skeleton_image = skeleton_maker(
-                        fingerprint.normalised_img,
-                        fingerprint.segmented_img,
-                        fingerprint.norm_img,
-                        fingerprint.mask,
-                        fingerprint.block,
-                    )
-                    
-                    # Process skeleton
-                    skeleton_image.fingerprintPipeline()
-                    
-                    # Replace original with processed skeleton
-                    users[user_id]['finger'][idx] = skeleton_image.skeleton
-                    # Initialize 'minutiae' list if not already present
-                    if 'minutiae' not in users[user_id]:
-                        users[user_id]['minutiae'] = [None] * len(users[user_id]['finger'])
+        for user_id, user_data  in tqdm(users.items(), desc="Processing users"):
+            for hand,fingers in user_data["fingers"].items(): 
+                for finger_index, impressions in enumerate(fingers):
+                    for impression_index, image in enumerate(impressions):
 
-                    # Store extracted minutiae
-                    users[user_id]['minutiae'][idx] = skeleton_image.minutiae_list
+                        try:
+                            fingerprint = minutiaLoader(image)
+                            skeleton_image = skeleton_maker(
+                                fingerprint.normalised_img,
+                                fingerprint.segmented_img,
+                                fingerprint.norm_img,
+                                fingerprint.mask,
+                                fingerprint.block,
+                            )
 
-                    if 'mask' not in users[user_id]:
-                        users[user_id]['mask'] = [None] * len(users[user_id]['finger'])
-                    
-                    users[user_id]['mask'][idx] = fingerprint.mask
-                    
-                except Exception as e:
-                    print(f"Error processing user {user_id}: {e}")
+                            # Process skeleton
+                            skeleton_image.fingerprintPipeline()
+
+
+                            users[user_id]["fingers"][hand][finger_index][impression_index] = {
+                                    "skeleton": skeleton_image.skeleton,
+                                    "minutiae": skeleton_image.minutiae_list,
+                                    "mask": fingerprint.mask
+                                }
+
+                        except Exception as e:
+                            print(f"Error processing {user_id}-{hand}-f{finger_index}-i{impression_index}: {e}")
         # Save processed skeleton data
         #print(users)
         save_users_dictionary(users, "processed_skeletons.pkl")
