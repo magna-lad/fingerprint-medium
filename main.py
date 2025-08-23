@@ -75,46 +75,98 @@ def main():
     else:
         print("Using cached skeleton data - skipping skeleton generation.")
     
-    print(users)
+    #print(users.items()['fingers']['L'])
 
-#
-#
-#
-    #
-    ##filter the minutiaes    
-    #processed_users = load_users_dictionary("processed_minutiae_data.pkl")
-#
-    #if processed_users is None:
-    #    print("No processed users data found. Processing from scratch...")
-    #    
-    #    processed_users = {}
-#
-    #    try:
-    #        for user_id, image_dic in tqdm(users.items(), desc="Filtering users"):
-    #            fingerprint_list = image_dic['finger']     # List of 40 skeletons
-    #            minutiae_list = image_dic['minutiae']      # List of 40 minutiae sets
-    #            mask_list = image_dic['mask']
-#
-    #            mf = minutiae_filter(fingerprint_list, minutiae_list,mask_list)
-    #            filtered_fingers, filtered_minutiae = mf.filter_all() # add parameters min_distance=5, border_margin=10
-#
-    #            processed_users[user_id] = {
-    #                'finger': filtered_fingers,
-    #                'minutiae': filtered_minutiae
-    #            }
-#
-    #        #print(processed_users)
-    #        # save to disk
-    #        save_users_dictionary(processed_users, "processed_minutiae_data.pkl")
-    #    except Exception as e:
-    #        print(f"Error processing user : {e}")
-#
-    #else:
-    #    print("Using processed minutiae data - skipping minutiae filtering.")
-    #    
-#
-#
-    ## Step 3: Display processing summary
+
+
+
+    # improve this
+
+
+    
+    #filter the minutiaes    
+    processed_users = load_users_dictionary("processed_minutiae_data.pkl")
+
+    '''
+    structure-
+    users = {
+            "000": {
+                "fingers": {
+                    "L": [ [{
+                            "skeleton"=[],
+                            "minutiae"=[],
+                            "mask"=[]
+                            },
+                            {
+                            "skeleton"=[],
+                            "minutiae"=[],
+                            "mask"=[]
+                            },, {
+                            "skeleton"=[],
+                            "minutiae"=[],
+                            "mask"=[]
+                            },, {
+                            "skeleton"=[],
+                            "minutiae"=[],
+                            "mask"=[]
+                            },, {
+                            "skeleton"=[],
+                            "minutiae"=[],
+                            "mask"=[]
+                            },],   # finger 0
+                           [impr1, impr2, impr3, impr4, impr5],   # finger 1
+                           [impr1, impr2, impr3, impr4, impr5],   # finger 2
+                           [impr1, impr2, impr3, impr4, impr5] ], # finger 3
+                    "R": [ [...], [...], [...], [...] ]
+                }
+            },
+            ...
+        }
+    '''
+    if processed_users is None:
+        print("No processed users data found. Processing from scratch...")
+        
+        processed_users = {}
+
+        try:
+
+
+            for user_id, user_data  in tqdm(users.items(), desc="Processing users"):
+                for hand,fingers in user_data["fingers"].items(): 
+                    for finger_index, impressions in enumerate(fingers):
+                        for impression_index, image in enumerate(impressions):
+                            skeleton_list = image['skeleton']
+                            minutiae_list = image['minutiae']
+                            mask_list = image['mask']
+                            mf = minutiae_filter(skeleton_list, minutiae_list,mask_list)
+                            filtered_fingers, filtered_minutiae = mf.filter_all() # add parameters min_distance=5, border_margin=10
+
+                            users[user_id]["fingers"][hand][finger_index][impression_index] = {
+                            'finger': filtered_fingers,
+                            'minutiae': filtered_minutiae
+                            }
+
+
+
+
+           
+
+                
+
+                
+
+            #print(processed_users)
+            # save to disk
+            save_users_dictionary(processed_users, "processed_minutiae_data.pkl")
+        except Exception as e:
+            print(f"Error processing user : {e}")
+
+    else:
+        print("Using processed minutiae data - skipping minutiae filtering.")
+        
+
+
+    # Step 3: Display processing summary
     #users_filtered = load_users_dictionary("processed_minutiae_data.pkl")
     ##print(users_filtered)
     #print("\n=== Processing Summary ===")

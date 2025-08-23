@@ -3,6 +3,8 @@ from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 
+
+# update the code for the new datastructure
 class minutiae_filter:
     def __init__(self, skeleton_list, minutiae_list, mask_list):
         self.fingerprints = skeleton_list        # list of 2D arrays

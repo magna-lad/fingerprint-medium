@@ -317,7 +317,7 @@ class skeleton_maker:
                         end_x = int(i + length * math.cos(self.angle_minutiae))
                         end_y = int(j + length * math.sin(self.angle_minutiae))
                         cv2.line(result, (i, j), (end_x, end_y), color=colors[minutiae], thickness=2)
-                        self.minutiae_list.append([(self.y_cord,self.x_cord),self.type,self.angle_minutiae])
+                        self.minutiae_list.append([self.y_cord,self.x_cord,self.type,self.angle_minutiae])
 
         
         #print(self.minutiae_list)
