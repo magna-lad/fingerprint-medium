@@ -6,17 +6,17 @@ import matplotlib.pyplot as plt
 
 # update the code for the new datastructure
 class minutiae_filter:
-    def __init__(self, skeleton_list, minutiae_list, mask_list):
-        self.fingerprints = skeleton_list        # list of 2D arrays
-        self.minutiae_sets = minutiae_list       # list of [(x, y), type, angle]
-        self.mask_set = mask_list                # list of binary masks (0 and 255 or 0 and 1)
-
+    def __init__(self, skeleton, minutiae, mask):
+        self.skeleton = skeleton        # list of 2D arrays
+        self.minutiae = minutiae       # list of [(x, y), type, angle]
+        self.mask = mask               # list of binary masks (0 and 255 or 0 and 1)
+ 
     def filter_all(self, min_distance=15, boundary_thickness=15, angle_threshold=30):
         filtered_fingers = []
         filtered_minutiae_sets = []
 
-        for img, minutiae, mask in zip(self.fingerprints, self.minutiae_sets, self.mask_set):
-            h, w = img.shape
+        for skeleton, minutiae, mask in (self.skeleton, self.minutiae, self.mask):
+            h, w = skeleton.shape
             filtered = []
 
             
@@ -61,8 +61,8 @@ class minutiae_filter:
                     continue
 
                 # 2. Ridge check
-                if not self._is_on_valid_ridge(img, x, y):
-                    img[y, x] = 0
+                if not self._is_on_valid_ridge(skeleton, x, y):
+                    skeleton[y, x] = 0
                     continue
 
                 # 3. Proximity check
@@ -74,7 +74,7 @@ class minutiae_filter:
                         too_close = True
                         break
                 if too_close:
-                    img[y, x] = 0
+                    skeleton[y, x] = 0
                     continue
 
                 # 4. Ridge Orientation Consistency Check
@@ -85,7 +85,7 @@ class minutiae_filter:
                
                 filtered.append(pt)
 
-            filtered_fingers.append(img)
+            filtered_fingers.append(skeleton)
             filtered_minutiae_sets.append(filtered)
 
         return filtered_fingers, filtered_minutiae_sets
