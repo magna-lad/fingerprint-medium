@@ -25,40 +25,25 @@ class MinutiaeROCAnalyzer:
 
 
     # find the neighbouring minutiae for a minutiae and make feature vectors to feed in the cnn algo
-    # earlier mistake
-    # made the structure as [(x,y), type, angle] but needs to be [x,y, type, angle] for error-less numpy conversion
-
-    def minutiae_repair(self):
+    
         '''
         convert all the minutiae from [(x,y), type, angle] to [x,y, type, angle]
 
-        user list
-        {
-        000: {'minutiae':[    **list of all fingerprints minutiaes
-                            [ **minutiae of a fingerprint],
-                            [ **minutiae of a fingerprint],
-                            .......
-                           ]
-               },
-        001 :{'minutiae':[    **list of all fingerprints minutiaes
-                            [ **minutiae of a fingerprint],
-                            [ **minutiae of a fingerprint],
-                            .......
-                           ]
-               },
-        ......
-        }
+        users = {
+            "000": {
+                "fingers": {
+                    "L": [{"finger":[numpy array],"minutiae":[minutiae array]},
+                          {impression2},...],   # finger 0
+                           [impr1, impr2, impr3, impr4, impr5],   # finger 1
+                           [impr1, impr2, impr3, impr4, impr5],   # finger 2
+                           [impr1, impr2, impr3, impr4, impr5] ], # finger 3
+                    "R": [ [...], [...], [...], [...] ]
+                }
+            },
+            ...
+        }                                                                                                                  
         '''
-        for user_id,all_data in tqdm(self.users_minutiae.items(),desc="Repairing minutiae"):
-            for minutiae_head,all_fingers_per_user in all_data.items():
-               for finger_idx, finger in enumerate(all_fingers_per_user):  
-                    new_finger = []
-                    for minutia in finger:
-                        (x, y), typ, angle = minutia
-                        new_finger.append([x, y, typ, angle])
-                    self.users_minutiae[user_id][minutiae_head][finger_idx] = np.array(new_finger)
-
-        print(self.users_minutiae)
+        
 
     
     @staticmethod

@@ -8,87 +8,76 @@ import matplotlib.pyplot as plt
 class minutiae_filter:
     def __init__(self, skeleton, minutiae, mask):
         self.skeleton = skeleton        # list of 2D arrays
-        self.minutiae = minutiae       # list of [(x, y), type, angle]
+        self.minutiae = minutiae       # list of [x, y, type, angle]
         self.mask = mask               # list of binary masks (0 and 255 or 0 and 1)
  
-    def filter_all(self, min_distance=15, boundary_thickness=15, angle_threshold=30):
-        filtered_fingers = []
-        filtered_minutiae_sets = []
-
-        for skeleton, minutiae, mask in (self.skeleton, self.minutiae, self.mask):
-            h, w = skeleton.shape
-            filtered = []
+    def filter_all(self, min_distance=20, boundary_thickness=15, angle_threshold=30):
+        
+        skeleton, minutiae, mask = self.skeleton, self.minutiae, self.mask
+        h, w = skeleton.shape
+        filtered = []
 
             
 
-            # Step 1: Binarize mask
-            mask_bin = (mask > 0).astype(np.uint8)
+        # Step 1: Binarize mask
+        mask_bin = (mask > 0).astype(np.uint8)
+        # Step 2: Get mask boundary using morphological gradient
+        kernel = np.ones((3, 3), np.uint8)
+        mask_boundary = cv2.morphologyEx(mask_bin, cv2.MORPH_GRADIENT, kernel)
+        # Step 3: Thicken mask boundary
+        if boundary_thickness > 1:
+            mask_boundary = cv2.dilate(mask_boundary, kernel, iterations=boundary_thickness)
 
-            # Step 2: Get mask boundary using morphological gradient
-            kernel = np.ones((3, 3), np.uint8)
-            mask_boundary = cv2.morphologyEx(mask_bin, cv2.MORPH_GRADIENT, kernel)
+        # Step 4: Create image border mask
+        img_border = np.zeros_like(mask_boundary)
+        img_border[:(boundary_thickness+10), :] = 1
+        img_border[-(boundary_thickness+10):, :] = 1
+        img_border[:, :(boundary_thickness+10)] = 1
+        img_border[:, -(boundary_thickness+10):] = 1
 
-            # Step 3: Thicken mask boundary
-            if boundary_thickness > 1:
-                mask_boundary = cv2.dilate(mask_boundary, kernel, iterations=boundary_thickness)
+        # Step 5: Combine both boundaries
+        combined_boundary = np.clip(mask_boundary + img_border, 0, 1).astype(np.uint8)
 
-            # Step 4: Create image border mask
-            img_border = np.zeros_like(mask_boundary)
-            img_border[:(boundary_thickness+10), :] = 1
-            img_border[-(boundary_thickness+10):, :] = 1
-            img_border[:, :(boundary_thickness+10)] = 1
-            img_border[:, -(boundary_thickness+10):] = 1
+        for pt in minutiae:  # [x, y, type, angle]
+            x, y = pt[0],pt[1]
+            # setting type: 'bifurcation'-1
+                    #   'ending'-0  
+            if pt[2] == 'bifurcation':
+                pt[2] =1
+            elif pt[2] == 'ending':
+                pt[2] = 0
+            # Skip if out of bounds
+            if not (0 <= x < w and 0 <= y < h):
+                continue
+            # 1. Skip if on boundary
+            if combined_boundary[y, x] == 1:
+                continue
+            # 2. Ridge check
+            if not self._is_on_valid_ridge(skeleton, x, y):
+                skeleton[y, x] = 0
+                continue
+            # 3. Proximity check
+            too_close = False
+            for other in filtered:
+                ox, oy = other[0],other[1]
+                dist = ((x - ox)**2 + (y - oy)**2)**0.5
+                if dist < min_distance:
+                    too_close = True
+                    break
+            if too_close:
+                skeleton[y, x] = 0
+                continue
+            # 4. Ridge Orientation Consistency Check
+            angle_ok = self._is_orientation_consistent(pt, minutiae, angle_threshold)
+            if not angle_ok:
+                continue
+            
+           
+            filtered.append(pt)
 
-            # Step 5: Combine both boundaries
-            combined_boundary = np.clip(mask_boundary + img_border, 0, 1).astype(np.uint8)
+            
 
-            for pt in minutiae:  # [(x, y), type, angle]
-                x, y = pt[0]
-
-                # setting type: 'bifurcation'-1
-                        #   'ending'-0  
-                if pt[1] == 'bifurcation':
-                    pt[1] =1
-                elif pt[1] == 'ending':
-                    pt[1] = 0
-
-                # Skip if out of bounds
-                if not (0 <= x < w and 0 <= y < h):
-                    continue
-
-                # 1. Skip if on boundary
-                if combined_boundary[y, x] == 1:
-                    continue
-
-                # 2. Ridge check
-                if not self._is_on_valid_ridge(skeleton, x, y):
-                    skeleton[y, x] = 0
-                    continue
-
-                # 3. Proximity check
-                too_close = False
-                for other in filtered:
-                    ox, oy = other[0]
-                    dist = ((x - ox)**2 + (y - oy)**2)**0.5
-                    if dist < min_distance:
-                        too_close = True
-                        break
-                if too_close:
-                    skeleton[y, x] = 0
-                    continue
-
-                # 4. Ridge Orientation Consistency Check
-                angle_ok = self._is_orientation_consistent(pt, minutiae, angle_threshold)
-                if not angle_ok:
-                    continue
-                
-               
-                filtered.append(pt)
-
-            filtered_fingers.append(skeleton)
-            filtered_minutiae_sets.append(filtered)
-
-        return filtered_fingers, filtered_minutiae_sets
+        return skeleton,filtered
 
     def _is_on_valid_ridge(self, img, x, y):
         y_min = max(0, y - 1)
@@ -104,17 +93,17 @@ class minutiae_filter:
         Compares current angle with surrounding angles within radius.
         Removes minutiae if orientation is inconsistent.
         """
-        x, y = pt[0]
-        angle = pt[2]
+        x, y = pt[0],pt[1]
+        angle = pt[3]
         nearby_angles = []
 
         for other in all_minutiae:
-            ox, oy = other[0]
+            ox, oy = other[0],other[1]
             if (ox == x and oy == y):
                 continue
             dist = np.hypot(ox - x, oy - y)
             if dist <= radius:
-                nearby_angles.append(other[2])
+                nearby_angles.append(other[3])
 
         if not nearby_angles:
             return True  # No neighbors, allow

@@ -101,19 +101,19 @@ def main():
                             "skeleton"=[],
                             "minutiae"=[],
                             "mask"=[]
-                            },, {
+                            }, {
                             "skeleton"=[],
                             "minutiae"=[],
                             "mask"=[]
-                            },, {
+                            }, {
                             "skeleton"=[],
                             "minutiae"=[],
                             "mask"=[]
-                            },, {
+                            }, {
                             "skeleton"=[],
                             "minutiae"=[],
                             "mask"=[]
-                            },],   # finger 0
+                            }],   # finger 0
                            [impr1, impr2, impr3, impr4, impr5],   # finger 1
                            [impr1, impr2, impr3, impr4, impr5],   # finger 2
                            [impr1, impr2, impr3, impr4, impr5] ], # finger 3
@@ -126,7 +126,7 @@ def main():
     if processed_users is None:
         print("No processed users data found. Processing from scratch...")
         
-        processed_users = {}
+        #processed_users = {}
 
         try:
 
@@ -157,7 +157,8 @@ def main():
 
             #print(processed_users)
             # save to disk
-            save_users_dictionary(processed_users, "processed_minutiae_data.pkl")
+            #print(processed_users)
+            save_users_dictionary(users, "processed_minutiae_data.pkl")
         except Exception as e:
             print(f"Error processing user : {e}")
 
@@ -165,32 +166,38 @@ def main():
         print("Using processed minutiae data - skipping minutiae filtering.")
         
 
+    #print(users.keys())
+    #Step 3: Display processing summary
+    users_filtered = load_users_dictionary("processed_minutiae_data.pkl")
+    #print(users_filtered)
+    print("\n=== Processing Summary ===")
+    total_images = 0
+    total_minutiae = 0
+    
+    for user_id, user_data  in tqdm(users.items(), desc="Processing users"):
+        for hand,fingers in user_data["fingers"].items(): 
+            for finger_index, impressions in enumerate(fingers):
+                user_images = len(users[user_id]["fingers"][hand][finger_index])
+                total_images += user_images
+                user_minutiae=0
+                for impression_index, image in enumerate(impressions):
+                    num_minutiae = len(image["minutiae"])
+                    user_minutiae+=num_minutiae
+                    #print(user_minutiae)
+                    #total_minutiae += user_minutiae
+                    print(f"User {user_id}: {user_images} images, {user_minutiae} total minutiae")
+    
 
-    # Step 3: Display processing summary
-    #users_filtered = load_users_dictionary("processed_minutiae_data.pkl")
-    ##print(users_filtered)
-    #print("\n=== Processing Summary ===")
-    #total_images = 0
-    #total_minutiae = 0
-    #
-    #for user_id, user_data in users_filtered.items():
-    #    user_images = len(user_data['finger'])
-    #    user_minutiae = sum(len(minutiae) for minutiae in user_data.get('minutiae', []))
-    #    total_images += user_images
-    #    total_minutiae += user_minutiae
-    #    print(f"User {user_id}: {user_images} images, {user_minutiae} total minutiae")
-    #
-#
-    ##print(users_filtered.values())
-    #print(f"\nOverall: {total_images} images processed, {total_minutiae} total minutiae extracted")
-    #
-    ## Step 4: Perform ROC analysis
-    #print("\n" + "="*50)
-    #print("PERFORMING ROC ANALYSIS")
-    #print("="*50)
-#   # 
-    #
-#
+    #print(users_filtered.values())
+    print(f"\nOverall: {total_images} images processed, {total_minutiae} total minutiae extracted")
+    
+    # Step 4: Perform ROC analysis
+    print("\n" + "="*50)
+    print("PERFORMING ROC ANALYSIS")
+    print("="*50)
+#    
+    
+
     ## now pass a new dictionary with user id as the key and minutiae as the items
     ## slice the users_filtered dictionary 
     #users_filtered_sliced = {}
