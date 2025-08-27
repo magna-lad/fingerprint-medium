@@ -144,16 +144,7 @@ def main():
                             users[user_id]["fingers"][hand][finger_index][impression_index] = {
                             'finger': filtered_fingers,
                             'minutiae': filtered_minutiae
-                            }
-
-
-
-
-           
-
-                
-
-                
+                            } 
 
             #print(processed_users)
             # save to disk
