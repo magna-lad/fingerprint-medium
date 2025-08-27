@@ -20,8 +20,18 @@ class MinutiaeROCAnalyzer:
         """
 
         self.users_minutiae= users_minutiae
-        self.users_feature_vector = {uid: {head: [None] * len(fingers) for head, fingers in data.items()}
-                                     for uid, data in users_minutiae.items()}
+        self.users_feature_vectors = {
+            uid: {
+                "fingers": {
+                    hand: [
+                        [None for _ in finger]   # len(impressions)
+                        for finger in user_data["fingers"][hand]
+                    ] for hand in ["L", "R"]
+                }
+            } for uid, user_data in users_minutiae.items()
+        }
+        print(self.users_feature_vectors['000'])
+        
 
 
     # find the neighbouring minutiae for a minutiae and make feature vectors to feed in the cnn algo
@@ -32,8 +42,9 @@ class MinutiaeROCAnalyzer:
         users = {
             "000": {
                 "fingers": {
-                    "L": [{"finger":[numpy array],"minutiae":[minutiae array]},
-                          {impression2},...],   # finger 0
+                    "L": [
+                            {"finger":[numpy array],"minutiae":[minutiae array]},
+                            {impression2},...],   # finger 0
                            [impr1, impr2, impr3, impr4, impr5],   # finger 1
                            [impr1, impr2, impr3, impr4, impr5],   # finger 2
                            [impr1, impr2, impr3, impr4, impr5] ], # finger 3
@@ -155,14 +166,15 @@ class MinutiaeROCAnalyzer:
         #arrange them based on k nearest neighbours
         #print((self.users_minutiae.values()))
         #print(self.users_minutiae)
-        for user_id,all_data in tqdm(self.users_minutiae.items(), desc='feature vector generation'):
-            for minutiae_head,all_fingers_per_user in all_data.items():
-               for finger_idx, finger in enumerate(all_fingers_per_user):
-                    
-                    neighbors_indices, neighbors_distances = self.extract_neighbors(finger, k=3)
-                    neighbors_relative_angles = self.compute_relative_angles(finger, neighbors_indices)
-                    feature_vectors = self.create_feature_vectors(finger, neighbors_indices, neighbors_distances, neighbors_relative_angles)
-                    self.users_feature_vector[user_id][minutiae_head][finger_idx] = feature_vectors
+        for user_id, user_data  in tqdm(self.users_minutiae.items(), desc="Processing users"):
+                for hand,fingers in user_data["fingers"].items(): 
+                    for finger_index, impressions in enumerate(fingers):
+                        for impression_index, image in enumerate(impressions):
+
+                            neighbors_indices, neighbors_distances = self.extract_neighbors(image, k=3)
+                            neighbors_relative_angles = self.compute_relative_angles(image, neighbors_indices)
+                            feature_vectors = self.create_feature_vectors(image, neighbors_indices, neighbors_distances, neighbors_relative_angles)
+                            self.users_feature_vector[user_id][minutiae_head][finger_idx] = feature_vectors
 
         self.print_structure(self.users_feature_vector)
 
@@ -195,10 +207,9 @@ def genuine_pairs_(self):
 
 
 
-users=load_users_dictionary('processedSliced_minutiae_data.pkl',True)
+users=load_users_dictionary('processed_minutiae_data.pkl',True)
 
 #print(users)
 
 ko=MinutiaeROCAnalyzer(users)
-ko.minutiae_repair()
 ko.k_nearest_negihbors(k=3)
