@@ -30,7 +30,7 @@ class MinutiaeROCAnalyzer:
                 }
             } for uid, user_data in users_minutiae.items()
         }
-        print(self.users_feature_vectors['000'])
+        #print(self.users_feature_vectors['000'])
         
 
 
@@ -70,6 +70,7 @@ class MinutiaeROCAnalyzer:
         neighbors_indices: list of lists - each list contains indices of nearest neighbors for corresponding minutia
         neighbors_distances: list of lists - distances corresponding to neighbors_indices
         """
+        #print(minutiae)
         #print(minutiae)
         coords = minutiae[:, :2]  # extract only (x,y) for neighbors
         nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='auto').fit(coords)  # +1 because the closest neighbor is itself
@@ -171,35 +172,37 @@ class MinutiaeROCAnalyzer:
                     for finger_index, impressions in enumerate(fingers):
                         for impression_index, image in enumerate(impressions):
 
-                            neighbors_indices, neighbors_distances = self.extract_neighbors(image, k=3)
-                            neighbors_relative_angles = self.compute_relative_angles(image, neighbors_indices)
-                            feature_vectors = self.create_feature_vectors(image, neighbors_indices, neighbors_distances, neighbors_relative_angles)
-                            self.users_feature_vector[user_id][minutiae_head][finger_idx] = feature_vectors
-
-        self.print_structure(self.users_feature_vector)
-
+                            neighbors_indices, neighbors_distances = self.extract_neighbors(image["minutiae"], k=3)
+                            neighbors_relative_angles = self.compute_relative_angles(image["minutiae"], neighbors_indices)
+                            feature_vectors = self.create_feature_vectors(image["minutiae"], neighbors_indices, neighbors_distances, neighbors_relative_angles)
+                            self.users_feature_vectors[user_id]["fingers"][hand][finger_index][impression_index] = feature_vectors
+        self.print_structure(self.users_feature_vectors)
 
 
-def genuine_pairs_(self):
-    '''
-    input:
-    {
-        '000':
-          {
-            'minutiae':
-              [
-                [minutiae list for a fingerprint]
-                ...
-                ...
-                ...
-              ]
-          }
-    ........
-    }
 
-    output:
+    def genuine_pairs_(self):
+        '''
+        input:
+        {
+          '000':
+            {
+              'fingers':
+                {
+                  'L':[[feature_vectors_impression1],[feature_vectors_impression2]...],
+                       [feature_vectors_impression1],[feature_vectors_impression2]...],
+                       [feature_vectors_impression1],[feature_vectors_impression2]...],
+                       [feature_vectors_impression1],[feature_vectors_impression2]...], ]
+                    ...
+                  'R':[same]
+                    ...
+                }
+            }
+          '001':
+            .......
+        }
+        output:
 
-    '''
+        '''
     
     
 

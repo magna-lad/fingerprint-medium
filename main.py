@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 from minutiae_filter import minutiae_filter
 from load_save import *
+import numpy as np
 
 def main():
     data_dir = r"C:\Users\kound\OneDrive\Desktop\10Classes\5classes"
@@ -86,6 +87,7 @@ def main():
     
     #filter the minutiaes    
     processed_users = load_users_dictionary("processed_minutiae_data.pkl")
+    print('start')
 
     '''
     structure-
@@ -124,6 +126,7 @@ def main():
         }
     '''
     if processed_users is None:
+        print('start')
         print("No processed users data found. Processing from scratch...")
         
         #processed_users = {}
@@ -142,8 +145,8 @@ def main():
                             filtered_fingers, filtered_minutiae = mf.filter_all() # add parameters min_distance=5, border_margin=10
 
                             users[user_id]["fingers"][hand][finger_index][impression_index] = {
-                            'finger': filtered_fingers,
-                            'minutiae': filtered_minutiae
+                            'finger': np.array(filtered_fingers),
+                            'minutiae': np.array(filtered_minutiae)
                             } 
 
             #print(processed_users)
@@ -179,7 +182,7 @@ def main():
                     print(f"User {user_id}: {user_images} images, {user_minutiae} total minutiae")
     
 
-    #print(users_filtered.values())
+    print(users_filtered.values())
     print(f"\nOverall: {total_images} images processed, {total_minutiae} total minutiae extracted")
     
     # Step 4: Perform ROC analysis
