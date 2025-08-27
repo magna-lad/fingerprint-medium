@@ -7,7 +7,8 @@ import pickle
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 from load_save import *
-#from minutiae_repair import minutiae_repair
+from itertools import combinations, product
+    
 class MinutiaeROCAnalyzer:
     def __init__(self, users_minutiae):
         """
@@ -15,7 +16,7 @@ class MinutiaeROCAnalyzer:
             users_minutiae: dict {user_id: [ [fingerprint1], [fingerprint2], ... ]}
                             Each fingerprint has a list of minutiaes
                             Each minutiae list is a list of minutiae [(x,y), type, angle].
-        https://doi.org/10.1016/j.measen.2025.101809 
+        source: https://doi.org/10.1016/j.measen.2025.101809  -> for making feature vectors
         
         """
 
@@ -132,7 +133,7 @@ class MinutiaeROCAnalyzer:
     
         return np.array(feature_vectors)
     
-    # just to know the structure of the final dataset
+    # just to know the structure of self variables
     def print_structure(self,data, max_depth=3, indent=0):
         if max_depth == 0:
             print('  ' * indent + '...')
@@ -165,8 +166,7 @@ class MinutiaeROCAnalyzer:
         '''
         #extract minutiae of a fingerprint
         #arrange them based on k nearest neighbours
-        #print((self.users_minutiae.values()))
-        #print(self.users_minutiae)
+        
         for user_id, user_data  in tqdm(self.users_minutiae.items(), desc="Processing users"):
                 for hand,fingers in user_data["fingers"].items(): 
                     for finger_index, impressions in enumerate(fingers):
@@ -176,11 +176,13 @@ class MinutiaeROCAnalyzer:
                             neighbors_relative_angles = self.compute_relative_angles(image["minutiae"], neighbors_indices)
                             feature_vectors = self.create_feature_vectors(image["minutiae"], neighbors_indices, neighbors_distances, neighbors_relative_angles)
                             self.users_feature_vectors[user_id]["fingers"][hand][finger_index][impression_index] = feature_vectors
-        self.print_structure(self.users_feature_vectors)
+        #self.print_structure(self.users_feature_vectors)
 
 
 
-    def genuine_pairs_(self):
+        
+    
+    def genuine_pairs_and_impostor_pairs(self):
         '''
         input:
         {
@@ -188,10 +190,11 @@ class MinutiaeROCAnalyzer:
             {
               'fingers':
                 {
-                  'L':[[feature_vectors_impression1],[feature_vectors_impression2]...],
-                       [feature_vectors_impression1],[feature_vectors_impression2]...],
-                       [feature_vectors_impression1],[feature_vectors_impression2]...],
-                       [feature_vectors_impression1],[feature_vectors_impression2]...], ]
+                  'L':[
+                        [feature_vectors_impression1],[feature_vectors_impression2]...],    # finger0
+                        [feature_vectors_impression1],[feature_vectors_impression2]...],    # finger1
+                        [feature_vectors_impression1],[feature_vectors_impression2]...],    # finger2
+                        [feature_vectors_impression1],[feature_vectors_impression2]...], ]  # finger3
                     ...
                   'R':[same]
                     ...
@@ -200,10 +203,47 @@ class MinutiaeROCAnalyzer:
           '001':
             .......
         }
-        output:
 
+        making pairs with impression images within the same finger list will be genuine pairs and all the other pairs will be  impostor pairs
+        output:
+        genuine and impostor pairs to train the model on
         '''
-    
+        genuine_pairs = []
+        impostor_pairs = []
+        subjects = list(self.users_feature_vectors.keys())
+
+        # Generating genuine pairs (within the same finger impressions)
+        for subject, vals in self.users_feature_vectors.items():
+            fingers = vals.get('fingers', {})
+            for hand, fingers_list in fingers.items():
+                for finger_impressions in fingers_list:
+                    for pair in combinations(finger_impressions, 2):
+                        genuine_pairs.append(pair)
+
+        # Generating brute force impostor pairs (all pairs between different subjects)
+        for i, subject1 in enumerate(subjects):
+            for j, subject2 in enumerate(subjects):
+                if i == j:
+                    continue
+                fingers1 = self.users_feature_vectors[subject1].get('fingers', {})
+                fingers2 = self.users_feature_vectors[subject2].get('fingers', {})
+                for hand1, fingers_list1 in fingers1.items():
+                    for hand2, fingers_list2 in fingers2.items():
+                        for finger_impressions1 in fingers_list1:
+                            for finger_impressions2 in fingers_list2:
+                                for imp1, imp2 in product(finger_impressions1, finger_impressions2):
+                                    impostor_pairs.append((imp1, imp2))
+        
+        labeled_pairs = []
+        #genuine pairs with label 1
+        for pair in genuine_pairs:
+            labeled_pairs.append((pair[0], pair[1], 1))
+        #impostor pairs with label 0
+        for pair in impostor_pairs:
+            labeled_pairs.append((pair[0], pair[1], 0))
+
+        return labeled_pairs # to train the model on
+
     
 
 
@@ -216,3 +256,4 @@ users=load_users_dictionary('processed_minutiae_data.pkl',True)
 
 ko=MinutiaeROCAnalyzer(users)
 ko.k_nearest_negihbors(k=3)
+ko.genuine_pairs_and_impostor_pairs()
