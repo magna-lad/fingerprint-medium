@@ -8,6 +8,7 @@ import numpy as np
 from sklearn.neighbors import NearestNeighbors
 from load_save import *
 from itertools import combinations, product
+import random
     
 class MinutiaeROCAnalyzer:
     def __init__(self, users_minutiae):
@@ -176,13 +177,13 @@ class MinutiaeROCAnalyzer:
                             neighbors_relative_angles = self.compute_relative_angles(image["minutiae"], neighbors_indices)
                             feature_vectors = self.create_feature_vectors(image["minutiae"], neighbors_indices, neighbors_distances, neighbors_relative_angles)
                             self.users_feature_vectors[user_id]["fingers"][hand][finger_index][impression_index] = feature_vectors
-        #self.print_structure(self.users_feature_vectors)
+        #print(len(self.users_feature_vectors["000"]["fingers"]["L"][0][1]))
 
 
 
         
     
-    def genuine_pairs_and_impostor_pairs(self):
+    def genuine_pairs_and_impostor_pairs(self,num_samples_per_genuine=1):
         '''
         input:
         {
@@ -207,6 +208,7 @@ class MinutiaeROCAnalyzer:
         making pairs with impression images within the same finger list will be genuine pairs and all the other pairs will be  impostor pairs
         output:
         genuine and impostor pairs to train the model on
+
         '''
         genuine_pairs = []
         impostor_pairs = []
@@ -218,29 +220,36 @@ class MinutiaeROCAnalyzer:
             for hand, fingers_list in fingers.items():
                 for finger_impressions in fingers_list:
                     for pair in combinations(finger_impressions, 2):
-                        genuine_pairs.append(pair)
+                        genuine_pairs.append((pair[0], pair[1], 1))
 
-        # Generating brute force impostor pairs (all pairs between different subjects)
-        for i, subject1 in enumerate(subjects):
-            for j, subject2 in enumerate(subjects):
-                if i == j:
-                    continue
-                fingers1 = self.users_feature_vectors[subject1].get('fingers', {})
-                fingers2 = self.users_feature_vectors[subject2].get('fingers', {})
-                for hand1, fingers_list1 in fingers1.items():
-                    for hand2, fingers_list2 in fingers2.items():
-                        for finger_impressions1 in fingers_list1:
-                            for finger_impressions2 in fingers_list2:
-                                for imp1, imp2 in product(finger_impressions1, finger_impressions2):
-                                    impostor_pairs.append((imp1, imp2))
-        
+        # impostor fingerprint pairs
+        subjects = list(self.users_feature_vectors.keys())
+        #print(subjects)
+        # Impostor pairs: match corresponding fingers/hands between different subjects
+        for idx1, subject1 in enumerate(subjects):
+            for subject2 in subjects[idx1+1:]:
+                for hand in ['L', 'R']:
+                    fingers1 = self.users_feature_vectors[subject1]['fingers'].get(hand, [])
+                    fingers2 = self.users_feature_vectors[subject2]['fingers'].get(hand, [])
+                    for finger_idx in range(min(len(fingers1), len(fingers2))):
+                        impressions1 = fingers1[finger_idx]
+                        impressions2 = fingers2[finger_idx]
+                        # All combinations between this finger (cross-subject, impostor)
+                        for imp1 in impressions1:
+                            for imp2 in impressions2:
+                                impostor_pairs.append((imp1, imp2, 0))
+
+        # Downsample impostor pairs for balance, if needed
+        if len(impostor_pairs) > num_samples_per_genuine * len(genuine_pairs):
+            impostor_pairs = random.sample(
+                impostor_pairs, num_samples_per_genuine * len(genuine_pairs))
+
+        # Combine and save
         labeled_pairs = []
-        #genuine pairs with label 1
-        for pair in genuine_pairs:
-            labeled_pairs.append((pair[0], pair[1], 1))
-        #impostor pairs with label 0
-        for pair in impostor_pairs:
-            labeled_pairs.append((pair[0], pair[1], 0))
+        print(len(genuine_pairs), len(impostor_pairs))
+        labeled_pairs = genuine_pairs + impostor_pairs
+        save_users_dictionary(labeled_pairs,"labeled_pairs.pkl")
+        #print((labeled_pairs[0][0][2]))
 
         return labeled_pairs # to train the model on
 
@@ -256,4 +265,6 @@ users=load_users_dictionary('processed_minutiae_data.pkl',True)
 
 ko=MinutiaeROCAnalyzer(users)
 ko.k_nearest_negihbors(k=3)
+print('saatata')
 ko.genuine_pairs_and_impostor_pairs()
+
