@@ -198,98 +198,167 @@ class MinutiaeROCAnalyzer:
     
 
     def graph_maker(self):
+        """Build graph representations for all fingerprint impressions."""
         fingerprint_graphs = []
-        for uid, udata in self.users_feature_vectors.items():
+        graph_metadata = {}  # For easy lookup
+
+        print("Building graphs from minutiae...")
+
+        for uid, udata in tqdm(self.users_feature_vectors.items(), desc="Processing users"):
             for hand, fingers in udata['fingers'].items():
-                for finger in fingers:
-                    for impression in finger:
-                        if impression is not None:
+                for finger_idx, finger in enumerate(fingers):
+                    for impression_idx, impression in enumerate(finger):
+                        if impression is not None and len(impression) > 0:
                             minutiae = impression[:, :4]
-                            #print(minutiae)
+
+                            # Build KNN structure
                             neighbors_indices, neighbors_distances = self.extract_neighbors(minutiae, k=3)
                             neighbors_relative_angles = self.compute_relative_angles(minutiae, neighbors_indices)
-                            graph = self.build_graph_from_minutiae(minutiae,
-                                                              neighbors_indices,
-                                                              neighbors_distances,
-                                                              neighbors_relative_angles)
-                            fingerprint_graphs.append((uid, hand, graph))
 
-                            
+                            # Create graph
+                            graph = self.build_graph_from_minutiae(
+                                minutiae,
+                                neighbors_indices,
+                                neighbors_distances,
+                                neighbors_relative_angles
+                            )
 
-        #print(fingerprint_graphs)
+                            # Create unique identifier for this impression
+                            graph_id = f"{uid}_{hand}_{finger_idx}_{impression_idx}"
 
+                            # Store with metadata
+                            graph_info = {
+                                'graph': graph,
+                                'user_id': uid,
+                                'hand': hand,
+                                'finger_idx': finger_idx,
+                                'impression_idx': impression_idx,
+                                'graph_id': graph_id
+                            }
 
-    def genuine_pairs_and_impostor_pairs(self,num_samples_per_genuine=1):
-        '''
-        input:
-        {
-          '000':
-            {
-              'fingers':
-                {
-                  'L':[
-                        [feature_vectors_impression1],[feature_vectors_impression2]...],    # finger0
-                        [feature_vectors_impression1],[feature_vectors_impression2]...],    # finger1
-                        [feature_vectors_impression1],[feature_vectors_impression2]...],    # finger2
-                        [feature_vectors_impression1],[feature_vectors_impression2]...], ]  # finger3
-                    ...
-                  'R':[same]
-                    ...
-                }
-            }
-          '001':
-            .......
-        }
+                            fingerprint_graphs.append(graph_info)
+                            graph_metadata[graph_id] = graph_info
 
-        making pairs with impression images within the same finger list will be genuine pairs and all the other pairs will be  impostor pairs
-        output:
-        genuine and impostor pairs to train the model on
+        print(f"Built {len(fingerprint_graphs)} graphs")
 
-        '''
+        self.fingerprint_graphs = fingerprint_graphs
+        self.graph_metadata = graph_metadata
+
+        return fingerprint_graphs
+    
+    def create_graph_pairs(self, num_impostor_per_genuine=1):
+        """
+        Create genuine and impostor pairs from graphs.
+
+        Returns:
+            List of tuples: (graph1, graph2, label)
+            label = 1 for genuine, 0 for impostor
+        """
+        if not hasattr(self, 'fingerprint_graphs'):
+            raise ValueError("Run graph_maker() first!")
+
         genuine_pairs = []
         impostor_pairs = []
-        subjects = list(self.users_feature_vectors.keys())
 
-        # Generating genuine pairs (within the same finger impressions)
-        for subject, vals in self.users_feature_vectors.items():
-            fingers = vals.get('fingers', {})
-            for hand, fingers_list in fingers.items():
-                for finger_impressions in fingers_list:
-                    for pair in combinations(finger_impressions, 2):
-                        genuine_pairs.append((pair[0], pair[1], 1))
+        # Group graphs by finger (same user, hand, finger_idx)
+        finger_groups = {}
+        for graph_info in self.fingerprint_graphs:
+            key = (graph_info['user_id'], graph_info['hand'], graph_info['finger_idx'])
+            if key not in finger_groups:
+                finger_groups[key] = []
+            finger_groups[key].append(graph_info)
 
-        # impostor fingerprint pairs
-        subjects = list(self.users_feature_vectors.keys())
-        #print(subjects)
-        # Impostor pairs: match corresponding fingers/hands between different subjects
-        for idx1, subject1 in enumerate(subjects):
-            for subject2 in subjects[idx1+1:]:
-                for hand in ['L', 'R']:
-                    fingers1 = self.users_feature_vectors[subject1]['fingers'].get(hand, [])
-                    fingers2 = self.users_feature_vectors[subject2]['fingers'].get(hand, [])
-                    for finger_idx in range(min(len(fingers1), len(fingers2))):
-                        impressions1 = fingers1[finger_idx]
-                        impressions2 = fingers2[finger_idx]
-                        # All combinations between this finger (cross-subject, impostor)
-                        for imp1 in impressions1:
-                            for imp2 in impressions2:
-                                impostor_pairs.append((imp1, imp2, 0))
+        print("Creating genuine pairs...")
+        # Genuine pairs: different impressions of same finger
+        for key, graphs in tqdm(finger_groups.items()):
+            if len(graphs) < 2:
+                continue
+            for i in range(len(graphs)):
+                for j in range(i + 1, len(graphs)):
+                    genuine_pairs.append((
+                        graphs[i]['graph'],
+                        graphs[j]['graph'],
+                        1  # label = 1 for genuine
+                    ))
 
-        # Downsample impostor pairs for balance, if needed
-        if len(impostor_pairs) > num_samples_per_genuine * len(genuine_pairs):
+        print("Creating impostor pairs...")
+        # Impostor pairs: same finger position, different users
+        finger_position_groups = {}
+        for graph_info in self.fingerprint_graphs:
+            key = (graph_info['hand'], graph_info['finger_idx'])
+            if key not in finger_position_groups:
+                finger_position_groups[key] = {}
+
+            user_id = graph_info['user_id']
+            if user_id not in finger_position_groups[key]:
+                finger_position_groups[key][user_id] = []
+            finger_position_groups[key][user_id].append(graph_info)
+
+        # Create impostor pairs
+        for position_key, users_dict in finger_position_groups.items():
+            user_ids = list(users_dict.keys())
+            for i in range(len(user_ids)):
+                for j in range(i + 1, len(user_ids)):
+                    user1_graphs = users_dict[user_ids[i]]
+                    user2_graphs = users_dict[user_ids[j]]
+
+                    # Sample impostor pairs
+                    for g1 in user1_graphs:
+                        for g2 in user2_graphs:
+                            impostor_pairs.append((
+                                g1['graph'],
+                                g2['graph'],
+                                0  # label = 0 for impostor
+                            ))
+
+        # Balance dataset
+        if len(impostor_pairs) > num_impostor_per_genuine * len(genuine_pairs):
             impostor_pairs = random.sample(
-                impostor_pairs, num_samples_per_genuine * len(genuine_pairs))
+                impostor_pairs, 
+                num_impostor_per_genuine * len(genuine_pairs)
+            )
 
-        # Combine and save
-        labeled_pairs = []
-        print(len(genuine_pairs), len(impostor_pairs))
-        labeled_pairs = genuine_pairs + impostor_pairs
-        save_users_dictionary(labeled_pairs,"labeled_pairs.pkl")
-        #print((labeled_pairs[0][0][2]))
+        all_pairs = genuine_pairs + impostor_pairs
+        random.shuffle(all_pairs)
 
-        return labeled_pairs # to train the model on
+        print(f"Created {len(genuine_pairs)} genuine pairs")
+        print(f"Created {len(impostor_pairs)} impostor pairs")
+        print(f"Total: {len(all_pairs)} pairs")
 
+        self.split_pairs_train_val_test(all_pairs)
+        return all_pairs
     
+    def split_pairs_train_val_test(self, all_pairs, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15):
+        """
+        Split pairs into train, validation, and test sets.
+
+        Args:
+            all_pairs: List of (graph1, graph2, label) tuples
+            train_ratio: Proportion for training
+            val_ratio: Proportion for validation
+            test_ratio: Proportion for testing
+
+        Returns:
+            train_pairs, val_pairs, test_pairs
+        """
+        assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6, "Ratios must sum to 1"
+
+        n = len(all_pairs)
+        n_train = int(n * train_ratio)
+        n_val = int(n * val_ratio)
+
+        random.shuffle(all_pairs)
+
+        train_pairs = all_pairs[:n_train]
+        val_pairs = all_pairs[n_train:n_train + n_val]
+        test_pairs = all_pairs[n_train + n_val:]
+
+        print(f"\nDataset Split:")
+        print(f"  Training:   {len(train_pairs)} pairs ({len(train_pairs)/n*100:.1f}%)")
+        print(f"  Validation: {len(val_pairs)} pairs ({len(val_pairs)/n*100:.1f}%)")
+        print(f"  Testing:    {len(test_pairs)} pairs ({len(test_pairs)/n*100:.1f}%)")
+
+        return train_pairs, val_pairs, test_pairs
 
 
 
@@ -297,10 +366,10 @@ class MinutiaeROCAnalyzer:
 
 users=load_users_dictionary('processed_minutiae_data.pkl',True)
 
-#print(users)
 
 ko=MinutiaeROCAnalyzer(users)
 ko.k_nearest_negihbors(k=3)
 ko.graph_maker()
+ko.create_graph_pairs()
 #ko.genuine_pairs_and_impostor_pairs()
 
