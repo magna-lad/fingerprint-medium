@@ -12,7 +12,7 @@ import random
 import torch
 from torch_geometric.data import Data
     
-class MinutiaeROCAnalyzer:
+class GraphMinutiae:
     def __init__(self, users_minutiae):
         """
         Args:
@@ -364,12 +364,12 @@ class MinutiaeROCAnalyzer:
 
 
 
-users=load_users_dictionary('processed_minutiae_data.pkl',True)
-
-
-ko=MinutiaeROCAnalyzer(users)
-ko.k_nearest_negihbors(k=3)
-ko.graph_maker()
-ko.create_graph_pairs()
+#users=load_users_dictionary('processed_minutiae_data.pkl',True)
+#
+#
+#ko=GraphMinutiae(users)
+#ko.k_nearest_negihbors(k=3)
+#ko.graph_maker()
+#ko.create_graph_pairs()
 #ko.genuine_pairs_and_impostor_pairs()
 
