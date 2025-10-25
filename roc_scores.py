@@ -9,6 +9,8 @@ from sklearn.neighbors import NearestNeighbors
 from load_save import *
 from itertools import combinations, product
 import random
+import torch
+from torch_geometric.data import Data
     
 class MinutiaeROCAnalyzer:
     def __init__(self, users_minutiae):
@@ -179,10 +181,44 @@ class MinutiaeROCAnalyzer:
                             self.users_feature_vectors[user_id]["fingers"][hand][finger_index][impression_index] = feature_vectors
         #print(len(self.users_feature_vectors["000"]["fingers"]["L"][0][1]))
 
+    # building graph from the knn maps
+    def build_graph_from_minutiae(self,feature_vectors, neighbors_indices, neighbors_distances, neighbors_relative_angles):
+        edges, edge_features = [], []
+        for i, neighbors in enumerate(neighbors_indices):
+            for nbr, dist, rel_ang in zip(neighbors, neighbors_distances[i], neighbors_relative_angles[i]):
+                edges.append([i, nbr])
+                edge_features.append([dist, rel_ang])
 
+        # Convert lists into PyTorch tensors
+        edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
+        edge_attr = torch.tensor(edge_features, dtype=torch.float)
+        x = torch.tensor(feature_vectors, dtype=torch.float)
 
-        
+        return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     
+
+    def graph_maker(self):
+        fingerprint_graphs = []
+        for uid, udata in self.users_feature_vectors.items():
+            for hand, fingers in udata['fingers'].items():
+                for finger in fingers:
+                    for impression in finger:
+                        if impression is not None:
+                            minutiae = impression[:, :4]
+                            #print(minutiae)
+                            neighbors_indices, neighbors_distances = self.extract_neighbors(minutiae, k=3)
+                            neighbors_relative_angles = self.compute_relative_angles(minutiae, neighbors_indices)
+                            graph = self.build_graph_from_minutiae(minutiae,
+                                                              neighbors_indices,
+                                                              neighbors_distances,
+                                                              neighbors_relative_angles)
+                            fingerprint_graphs.append((uid, hand, graph))
+
+                            
+
+        #print(fingerprint_graphs)
+
+
     def genuine_pairs_and_impostor_pairs(self,num_samples_per_genuine=1):
         '''
         input:
@@ -265,6 +301,6 @@ users=load_users_dictionary('processed_minutiae_data.pkl',True)
 
 ko=MinutiaeROCAnalyzer(users)
 ko.k_nearest_negihbors(k=3)
-print('saatata')
-ko.genuine_pairs_and_impostor_pairs()
+ko.graph_maker()
+#ko.genuine_pairs_and_impostor_pairs()
 
