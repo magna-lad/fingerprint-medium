@@ -197,6 +197,25 @@ class GraphMinutiae:
         return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     
 
+    def normalize_minutiae_features(self,minutiae):
+        # minutiae: numpy array of shape [N, 4]: x, y, type, angle (degrees)
+        coords = minutiae[:, :2]  # x and y columns
+        # handle case where constant or all same coords
+        if coords.std(axis=0).min() < 1e-5:
+            coords = coords - coords.mean(axis=0)
+        else:
+            coords = (coords - coords.mean(axis=0)) / (coords.std(axis=0) + 1e-8)
+        # angle normalization
+        norm_angle = (minutiae[:, 3] % 360) / 360.0
+        # normalized features as [x, y, type, angle_norm]
+        type_col = minutiae[:, 2].astype(int)
+        type_onehot = np.eye(2)[type_col]
+        angle_rad = norm_angle * 2 * np.pi
+        angle_sin = np.sin(angle_rad)
+        angle_cos = np.cos(angle_rad)
+        normalized = np.column_stack([coords, type_onehot, angle_sin, angle_cos])
+        return normalized
+
     def graph_maker(self):
         """Build graph representations for all fingerprint impressions."""
         fingerprint_graphs = []
@@ -209,8 +228,10 @@ class GraphMinutiae:
                 for finger_idx, finger in enumerate(fingers):
                     for impression_idx, impression in enumerate(finger):
                         if impression is not None and len(impression) > 0:
+                            # Per impression, before graph creation:
                             minutiae = impression[:, :4]
-
+                            minutiae = self.normalize_minutiae_features(minutiae)
+                            
                             # Build KNN structure
                             neighbors_indices, neighbors_distances = self.extract_neighbors(minutiae, k=3)
                             neighbors_relative_angles = self.compute_relative_angles(minutiae, neighbors_indices)
@@ -325,7 +346,7 @@ class GraphMinutiae:
         print(f"Created {len(impostor_pairs)} impostor pairs")
         print(f"Total: {len(all_pairs)} pairs")
 
-        self.split_pairs_train_val_test(all_pairs)
+        #self.split_pairs_train_val_test(all_pairs)
         return all_pairs
     
     def split_pairs_train_val_test(self, all_pairs, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15):
@@ -371,5 +392,5 @@ class GraphMinutiae:
 #ko.k_nearest_negihbors(k=3)
 #ko.graph_maker()
 #ko.create_graph_pairs()
-#ko.genuine_pairs_and_impostor_pairs()
+
 

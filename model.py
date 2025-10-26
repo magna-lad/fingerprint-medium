@@ -6,6 +6,8 @@ import numpy as np
 import tqdm
 import random
 import matplotlib.pyplot as plt
+from torch.nn import LayerNorm
+
 
 class EdgeUpdateConv(MessagePassing):
     """Custom GNN layer with edge feature incorporation."""
@@ -33,7 +35,7 @@ class EdgeUpdateConv(MessagePassing):
 
     def message(self, x_j, edge_attr):
         combined = torch.cat([x_j, edge_attr], dim=1)
-        print(f"x_j: {x_j.shape}, edge_attr: {edge_attr.shape}, combined: {combined.shape}")
+        #print(f"x_j: {x_j.shape}, edge_attr: {edge_attr.shape}, combined: {combined.shape}")
         return self.linear_edge(combined)
 
     def update(self, aggr_out):
@@ -50,13 +52,9 @@ class FingerprintDescriptorGNN(torch.nn.Module):
         self.num_conv_layers = num_conv_layers
         
         # Graph convolution layers
-        self.convs = torch.nn.ModuleList([
-            EdgeUpdateConv(4, 128),  # first layer
-            EdgeUpdateConv(128, 128),
-            EdgeUpdateConv(128, 128),
-            EdgeUpdateConv(128, 128)
-        ])
+        self.convs = torch.nn.ModuleList()
         self.convs.append(EdgeUpdateConv(node_features, hidden_dim))
+        
         for _ in range(num_conv_layers - 1):
             self.convs.append(EdgeUpdateConv(hidden_dim, hidden_dim))
         
@@ -70,7 +68,7 @@ class FingerprintDescriptorGNN(torch.nn.Module):
         
         # MLP head
         self.fc1 = Linear(2 * hidden_dim, hidden_dim)
-        self.bn1 = BatchNorm1d(hidden_dim)
+        self.bn1 = LayerNorm(hidden_dim)
         self.fc2 = Linear(hidden_dim, output_dim)
         
     def forward(self, data):
@@ -238,7 +236,7 @@ def train_model(model, train_pairs, val_pairs, num_epochs=50,
         val_distances = []
         
         with torch.no_grad():
-            for graph1, graph2, label in tqdm(val_pairs, desc=f"Epoch {epoch+1}/{num_epochs} [Val]"):
+            for graph1, graph2, label in tqdm.tqdm(val_pairs, desc=f"Epoch {epoch+1}/{num_epochs} [Val]"):
                 graph1 = graph1.to(device)
                 graph2 = graph2.to(device)
                 
@@ -290,7 +288,7 @@ def train_model(model, train_pairs, val_pairs, num_epochs=50,
             break
     
     # Load best model
-    checkpoint = torch.load('best_fingerprint_gnn.pth')
+    checkpoint = torch.load('best_fingerprint_gnn.pth',weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     print(f"\n✓ Training complete! Best validation loss: {checkpoint['val_loss']:.4f}")
     
@@ -320,7 +318,7 @@ def evaluate_model(model, test_pairs, device='cuda'):
     print("\nEvaluating model...")
     
     with torch.no_grad():
-        for graph1, graph2, label in tqdm(test_pairs, desc="Computing embeddings"):
+        for graph1, graph2, label in tqdm.tqdm(test_pairs, desc="Computing embeddings"):
             graph1 = graph1.to(device)
             graph2 = graph2.to(device)
             
