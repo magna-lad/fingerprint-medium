@@ -2,8 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc
 from tqdm import tqdm
-import os
-import pickle
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 from load_save import *
@@ -36,13 +34,34 @@ class GraphMinutiae:
         }
         #print(self.users_feature_vectors['000'])
         
+    # just to know the structure of self variables
+    def print_structure(self,data, max_depth=3, indent=0):
+        if max_depth == 0:
+            print('  ' * indent + '...')
+            return
+        if isinstance(data, dict):
+            print('  ' * indent + '{')
+            for k, v in data.items():
+                print('  ' * (indent + 1) + f'{repr(k)}:')
+                self.print_structure(v, max_depth - 1, indent + 2)
+            print('  ' * indent + '}')
+        elif isinstance(data, list):
+            print('  ' * indent + '[')
+            n = min(3, len(data))
+            for i in range(n):
+                self.print_structure(data[i], max_depth - 1, indent + 1)
+            if len(data) > n:
+                print('  ' * (indent + 1) + '...')
+            print('  ' * indent + ']')
+        elif hasattr(data, 'shape') and hasattr(data, 'dtype'):
+            print('  ' * indent + f'np.ndarray shape={data.shape} dtype={data.dtype}')
+        else:
+            print('  ' * indent + repr(data))
 
-
-    # find the neighbouring minutiae for a minutiae and make feature vectors to feed in the cnn algo
+    # find the neighbouring minutiae for a minutiae and make feature vectors to feed in the model
     
         '''
-        convert all the minutiae from [(x,y), type, angle] to [x,y, type, angle]
-
+        
         users = {
             "000": {
                 "fingers": {
@@ -64,7 +83,7 @@ class GraphMinutiae:
     @staticmethod
     def extract_neighbors(minutiae, k=5):
         """
-        Extract k nearest neighbors for each minutia point based on Euclidean distance of (x,y) coordinates.
+        Extract k nearest neighbors for each minutia point based on Euclidean distance of normalised (x,y) coordinates.
     
         Parameters:
         minutiae: np.array of shape (N, 4) where columns represent [x, y, type, angle]
@@ -74,8 +93,7 @@ class GraphMinutiae:
         neighbors_indices: list of lists - each list contains indices of nearest neighbors for corresponding minutia
         neighbors_distances: list of lists - distances corresponding to neighbors_indices
         """
-        #print(minutiae)
-        #print(minutiae)
+        
         coords = minutiae[:, :2]  # extract only (x,y) for neighbors
         nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='auto').fit(coords)  # +1 because the closest neighbor is itself
         distances, indices = nbrs.kneighbors(coords)
@@ -111,13 +129,63 @@ class GraphMinutiae:
         return neighbors_relative_angles
     
     @staticmethod
+    def compute_relative_angles_normalized(normalized_minutiae, neighbors_indices):
+        """
+        Compute relative angle differences between each minutia and its neighbors
+        using normalized [sin, cos] angle representations.
+    
+        Parameters:
+        normalized_minutiae: np.array of shape (N, 6) - [x, y, t0, t1, sin(a), cos(a)], a- angle to be found
+        neighbors_indices: list of lists - neighbors for each minutia
+    
+        Returns:
+        neighbors_relative_angles: list of lists - relative angle differences in radians (or degrees, whichever you prefer)
+        """
+        neighbors_relative_angles = []
+        
+        
+        angles_sin = normalized_minutiae[:, 4]
+        angles_cos = normalized_minutiae[:, 5]
+
+        for i, neighbors in enumerate(neighbors_indices): # i- self, neigbhors- neighbours of self minutiae
+            # Reference angle components
+            ref_sin = angles_sin[i]
+            ref_cos = angles_cos[i]
+            
+            rel_angles = []
+            for nbr_idx in neighbors:
+                # Neighbor angle components
+                nbr_sin = angles_sin[nbr_idx]
+                nbr_cos = angles_cos[nbr_idx]
+                
+                 
+                # cos(a_ref)cos(a_nbr) + sin(a_ref)sin(a_nbr) = cos(a_ref - a_nbr)
+                product = (ref_cos * nbr_cos) + (ref_sin * nbr_sin)
+                
+                # Clip for numerical stability (e.g., 1.0000001)
+                product = np.clip(product, -1.0, 1.0)
+                
+                # Get angle in radians from acos
+                rel_angle_rad = np.arccos(product)
+                
+                # Convert to degrees, if required, my pipeline uses radians further down
+                #rel_angle_deg = np.degrees(rel_angle_rad)
+                
+                rel_angles.append(rel_angle_rad)
+                
+            neighbors_relative_angles.append(rel_angles)
+            
+        return neighbors_relative_angles
+    
+
+    @staticmethod
     def create_feature_vectors(minutiae, neighbors_indices, neighbors_distances, neighbors_relative_angles):
         """
         Create feature vectors for each minutia combining own features and neighbors' distances and relative angle differences.
     
         Parameters:
         minutiae: np.array of shape (N, 4) - columns: [x, y, type, angle]
-        neighbors_indices: list of lists
+        neighbors_indices: list of lists [self,neighoburs]
         neighbors_distances: list of lists
         neighbors_relative_angles: list of lists
     
@@ -136,31 +204,65 @@ class GraphMinutiae:
     
         return np.array(feature_vectors)
     
-    # just to know the structure of self variables
-    def print_structure(self,data, max_depth=3, indent=0):
-        if max_depth == 0:
-            print('  ' * indent + '...')
-            return
-        if isinstance(data, dict):
-            print('  ' * indent + '{')
-            for k, v in data.items():
-                print('  ' * (indent + 1) + f'{repr(k)}:')
-                self.print_structure(v, max_depth - 1, indent + 2)
-            print('  ' * indent + '}')
-        elif isinstance(data, list):
-            print('  ' * indent + '[')
-            n = min(3, len(data))
-            for i in range(n):
-                self.print_structure(data[i], max_depth - 1, indent + 1)
-            if len(data) > n:
-                print('  ' * (indent + 1) + '...')
-            print('  ' * indent + ']')
-        elif hasattr(data, 'shape') and hasattr(data, 'dtype'):
-            print('  ' * indent + f'np.ndarray shape={data.shape} dtype={data.dtype}')
-        else:
-            print('  ' * indent + repr(data))
+    @staticmethod
+    def augment_minutiae(minutiae, max_rotation=15, max_translation=10):
+        """
+        Apply random rotation and translation to a set of minutiae.
+        minutiae: np.array of shape [N, 4]
+        """
+        # 1. Random Rotation
+        angle_deg = np.random.uniform(-max_rotation, max_rotation)
+        angle_rad = np.radians(angle_deg)
+        c, s = np.cos(angle_rad), np.sin(angle_rad)
+        rotation_matrix = np.array([[c, -s], [s, c]])
 
+        coords = minutiae[:, :2]
+        center = coords.mean(axis=0)
+        rotated_coords = (coords - center) @ rotation_matrix.T + center
 
+        # 2. Random Translation
+        translation = np.random.uniform(-max_translation, max_translation, size=2)
+        final_coords = rotated_coords + translation
+
+        # 3. Update Angles
+        final_angles = (minutiae[:, 3] + angle_deg) % 360
+
+        augmented_minutiae = minutiae.copy()
+        augmented_minutiae[:, :2] = final_coords
+        augmented_minutiae[:, 3] = final_angles
+
+        return augmented_minutiae
+    
+    
+    def get_user_splits(self, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15):
+        """
+        to sort on the basis of user ids
+        """
+        all_user_ids = sorted(list(self.users_minutiae.keys()))
+        random.shuffle(all_user_ids)
+        n = len(all_user_ids)
+        n_train = int(n * train_ratio)
+        n_val = int(n * val_ratio)
+        train_users = set(all_user_ids[:n_train])
+        val_users = set(all_user_ids[n_train:n_train + n_val])
+        test_users = set(all_user_ids[n_train + n_val:])
+        return train_users, val_users, test_users
+
+    # revisit- done ok
+    def split_pairs_by_user(self, all_pairs, train_users, val_users, test_users):
+        graph_to_user = {info['graph_id']: info['user_id'] for info in self.fingerprint_graphs}
+        train_pairs, val_pairs, test_pairs = [], [], []
+        for g1, g2, label in all_pairs:
+            uid1 = graph_to_user[g1.graph_id]
+            uid2 = graph_to_user[g2.graph_id]
+            if uid1 in train_users and uid2 in train_users:
+                train_pairs.append((g1, g2, label))
+            elif uid1 in val_users and uid2 in val_users:
+                val_pairs.append((g1, g2, label))
+            elif uid1 in test_users and uid2 in test_users:
+                test_pairs.append((g1, g2, label))
+        return train_pairs, val_pairs, test_pairs
+       
     def k_nearest_negihbors(self,k=5):
         '''
         input- minutiae list of a fingerprint
@@ -175,12 +277,13 @@ class GraphMinutiae:
                     for finger_index, impressions in enumerate(fingers):
                         for impression_index, image in enumerate(impressions):
 
-                            neighbors_indices, neighbors_distances = self.extract_neighbors(image["minutiae"], k=3)
+                            neighbors_indices, neighbors_distances = self.extract_neighbors(image["minutiae"], k=5)
                             neighbors_relative_angles = self.compute_relative_angles(image["minutiae"], neighbors_indices)
                             feature_vectors = self.create_feature_vectors(image["minutiae"], neighbors_indices, neighbors_distances, neighbors_relative_angles)
                             self.users_feature_vectors[user_id]["fingers"][hand][finger_index][impression_index] = feature_vectors
         #print(len(self.users_feature_vectors["000"]["fingers"]["L"][0][1]))
-
+    
+     #revisit- done ok
     # building graph from the knn maps
     def build_graph_from_minutiae(self,feature_vectors, neighbors_indices, neighbors_distances, neighbors_relative_angles):
         edges, edge_features = [], []
@@ -195,7 +298,31 @@ class GraphMinutiae:
         x = torch.tensor(feature_vectors, dtype=torch.float)
 
         return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
-    
+    #revisit- done ok
+
+    def create_single_graph(self, minutiae_array, k=5):
+        """
+        Takes a raw minutiae array and converts it into a single PyG Data object (a graph).
+        minutiae_array: np.array of shape [N, 4] -> [x, y, type, angle]
+        """
+        if minutiae_array is None or len(minutiae_array) < k + 1:
+            return None # Not enough minutiae to build a valid graph
+
+        # Normalize the minutiae features (same logic as in graph_maker)
+        normalized_features = self.normalize_minutiae_features(minutiae_array)
+
+        # Build KNN structure
+        neighbors_indices, neighbors_distances = self.extract_neighbors(normalized_features, k=k)
+        neighbors_relative_angles = self.compute_relative_angles_normalized(normalized_features, neighbors_indices)
+
+        # Create the graph Data object for a single fingerprint
+        graph = self.build_graph_from_minutiae(
+            normalized_features,
+            neighbors_indices,
+            neighbors_distances,
+            neighbors_relative_angles
+        )
+        return graph
 
     def normalize_minutiae_features(self,minutiae):
         # minutiae: numpy array of shape [N, 4]: x, y, type, angle (degrees)
@@ -233,12 +360,12 @@ class GraphMinutiae:
                             minutiae = self.normalize_minutiae_features(minutiae)
                             
                             # Build KNN structure
-                            neighbors_indices, neighbors_distances = self.extract_neighbors(minutiae, k=3)
-                            neighbors_relative_angles = self.compute_relative_angles(minutiae, neighbors_indices)
+                            neighbors_indices, neighbors_distances = self.extract_neighbors(minutiae, k=5)
+                            neighbors_relative_angles = self.compute_relative_angles_normalized(minutiae, neighbors_indices)
 
                             # Create graph
                             graph = self.build_graph_from_minutiae(
-                                minutiae,
+                                minutiae,  #[coords, type_onehot, angle_sin, angle_cos]
                                 neighbors_indices,
                                 neighbors_distances,
                                 neighbors_relative_angles
@@ -246,7 +373,7 @@ class GraphMinutiae:
 
                             # Create unique identifier for this impression
                             graph_id = f"{uid}_{hand}_{finger_idx}_{impression_idx}"
-
+                            graph.graph_id = graph_id
                             # Store with metadata
                             graph_info = {
                                 'graph': graph,
@@ -267,6 +394,7 @@ class GraphMinutiae:
 
         return fingerprint_graphs
     
+    # for FingerprintContrastiveLoss
     def create_graph_pairs(self, num_impostor_per_genuine=1):
         """
         Create genuine and impostor pairs from graphs.
@@ -331,7 +459,9 @@ class GraphMinutiae:
                                 g2['graph'],
                                 0  # label = 0 for impostor
                             ))
-
+        print(len(genuine_pairs))
+        #print(impostor_pairs)
+        
         # Balance dataset
         if len(impostor_pairs) > num_impostor_per_genuine * len(genuine_pairs):
             impostor_pairs = random.sample(
@@ -349,7 +479,157 @@ class GraphMinutiae:
         #self.split_pairs_train_val_test(all_pairs)
         return all_pairs
     
+
+
+
+
+
+    # revisit
+    # for fingerprintTripletLoss
+
+    def create_triplets(self, train_users):
+        """
+        Create triplets (anchor, positive, negative) for training.
+        Performs on-the-fly augmentation for anchor and positive samples.
+        """
+        if not hasattr(self, 'fingerprint_graphs'):
+            raise ValueError("Run graph_maker() first to have graphs for negatives and validation!")
+    
+        triplets = []
+        
+        # 1. Group fingerprints by finger for users in the training set
+        finger_groups = {}
+        for graph_info in self.fingerprint_graphs:
+            user_id = graph_info['user_id']
+            if user_id in train_users:
+                key = (user_id, graph_info['hand'], graph_info['finger_idx'])
+                if key not in finger_groups:
+                    finger_groups[key] = []
+                # Store the info needed for lookup, not the graph itself
+                finger_groups[key].append(graph_info)
+        
+        # Get a list of pre-built graphs from the training set to serve as negatives
+        negative_candidate_graphs = [g['graph'] for g in self.fingerprint_graphs if g['user_id'] in train_users]
+    
+        print("Creating augmented triplets for training...")
+        for key, finger_impressions in tqdm(finger_groups.items(), desc="Generating triplets"):
+            if len(finger_impressions) < 2:
+                continue
+                
+            # For every combination of two impressions from the same finger...
+            for i in range(len(finger_impressions)):
+                for j in range(i + 1, len(finger_impressions)):
+                    anchor_info = finger_impressions[i]
+                    positive_info = finger_impressions[j]
+    
+                    # 2. LOOKUP: Get the raw minutiae from the original data structure
+                    # We slice with [:4] because k_nearest_neighbors might have added other features
+
+                    # cannot use self.users_feature_vectors- as not normalized
+                    raw_anchor_minutiae = self.users_feature_vectors[anchor_info['user_id']]['fingers'][anchor_info['hand']][anchor_info['finger_idx']][anchor_info['impression_idx']][:, :4]
+                    
+                    raw_positive_minutiae = self.users_feature_vectors[positive_info['user_id']]['fingers'][positive_info['hand']][positive_info['finger_idx']][positive_info['impression_idx']][:, :4]
+                    
+                    
+                    # 3. AUGMENT: Apply random transformations
+                    aug_anchor_minutiae = self.augment_minutiae(raw_anchor_minutiae)
+                    aug_positive_minutiae = self.augment_minutiae(raw_positive_minutiae)
+    
+                    # 4. BUILD GRAPH ON-THE-FLY
+                    anchor_graph = self.create_single_graph(aug_anchor_minutiae)
+                    positive_graph = self.create_single_graph(aug_positive_minutiae)
+    
+                    # Skip if augmentation resulted in an invalid graph (e.g., too few points)
+                    if anchor_graph is None or positive_graph is None:
+                        continue
+                    
+                    # 5. FIND A NEGATIVE
+                    # We can use the pre-built graphs for this
+                    while True:
+                        negative_graph = random.choice(negative_candidate_graphs)
+                        # Ensure the negative is from a different finger
+                        if negative_graph.graph_id != anchor_info['graph_id'] and negative_graph.graph_id != positive_info['graph_id']:
+                            break
+                        
+                    triplets.append((anchor_graph, positive_graph, negative_graph))
+        
+        random.shuffle(triplets)
+        print(f"Created {len(triplets)} augmented training triplets.")
+        return triplets
+
+    
+    
+    
     def split_pairs_train_val_test(self, all_pairs, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15):
+        """
+        Split pairs into train, validation, and test sets based on USER ID
+        to prevent data leakage.
+        """
+        assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6, "Ratios must sum to 1"
+        
+        # 1. Get all unique user IDs that have at least one graph
+        all_user_ids = sorted(list(self.users_feature_vectors.keys()))
+        random.shuffle(all_user_ids)
+
+        # 2. Split the USER IDs
+        n = len(all_user_ids)
+        n_train = int(n * train_ratio)
+        n_val = int(n * val_ratio)
+        
+        train_users = set(all_user_ids[:n_train])
+        val_users = set(all_user_ids[n_train:n_train + n_val])
+        test_users = set(all_user_ids[n_train + n_val:])
+        
+        print(f"\nUser Split:")
+        print(f"  Training Users:   {len(train_users)}")
+        print(f"  Validation Users: {len(val_users)}")
+        print(f"  Testing Users:    {len(test_users)}")
+
+        # 3. We need a way to get the user ID from a graph object
+        #    This is why 'graph_metadata' is useful. We map graph_id -> user_id
+        graph_to_user = {}
+        for info in self.fingerprint_graphs:
+            graph_to_user[info['graph_id']] = info['user_id']
+            
+        # 4. Assign pairs to splits
+        train_pairs, val_pairs, test_pairs = [], [], []
+        
+        for g1, g2, label in all_pairs:
+            try:
+                uid1 = graph_to_user[g1.graph_id]
+                uid2 = graph_to_user[g2.graph_id]
+            except:
+                print("Error: Graph ID not found. Check graph_maker implementation.")
+                continue
+                    
+            if uid1 is None or uid2 is None:
+                # This can happen with the hacky method.
+                # A proper graph_id on the object is required.
+                continue
+
+            # Assign pair based on user IDs
+            if uid1 in train_users and uid2 in train_users:
+                train_pairs.append((g1, g2, label))
+            elif uid1 in val_users and uid2 in val_users:
+                val_pairs.append((g1, g2, label))
+            elif uid1 in test_users and uid2 in test_users:
+                test_pairs.append((g1, g2, label))
+            # Cross-split pairs (e.g., train user vs val user) are impostors
+            # and can be added to the appropriate split.
+            # For simplicity, we only take pairs from *within* the same user split.
+
+        print(f"\nDataset Split (Pairs):")
+        n_total = len(train_pairs) + len(val_pairs) + len(test_pairs)
+        print(f"  Training:   {len(train_pairs)} pairs ({len(train_pairs)/n_total*100:.1f}%)")
+        print(f"  Validation: {len(val_pairs)} pairs ({len(val_pairs)/n_total*100:.1f}%)")
+        print(f"  Testing:    {len(test_pairs)} pairs ({len(test_pairs)/n_total*100:.1f}%)")
+
+        return train_pairs, val_pairs, test_pairs
+    
+
+    # for contrastive loss
+
+    def old_split_pairs_train_val_test(self, all_pairs, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15):
         """
         Split pairs into train, validation, and test sets.
 
