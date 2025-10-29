@@ -1,120 +1,166 @@
-#import pickle
-#
-## Path to your pickle file
-##file_path = r"./processed_minutiae_data.pkl"
-#
-#file_path = r"C:\Users\kound\OneDrive\Desktop\fingerprint_mine\biometric_cache\processed_skeletons.pkl"
-## Load the contents
-#with open(file_path, 'rb') as f:
-#    data = pickle.load(f)
-#
-## Now you can inspect the structure
-#print(type(data))               # e.g. dict
-#print(len(data))                # Number of users
-#
-## Example: Print first user ID and its data
-#for user_id, user_data in data.items():
-#    print("User ID:", user_id)
-#    print("Keys:", user_data.keys())  # Should include 'finger', maybe 'minutiae'
-#    
-#    print(f"Number of fingerprint images: {len(user_data['finger'])}")
-#    
-#    # If minutiae exists
-#    if 'minutiae' in user_data:
-#        print(f"Number of minutiae lists: {(user_data['minutiae'][0])}")
-#    
-#    break  # Remove this if you want to loop over all users
-#
-
-import pickle
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
-import tqdm
-
-# Load the data
-file_path = r"C:\Users\kound\OneDrive\Desktop\fingerprint_mine\biometric_cache\processed_minutiae_data.pkl"
-
-with open(file_path, 'rb') as f:
-    users = pickle.load(f)
-    #print(data)
-
-# Draw and show for one user
-for user_id, user_data  in tqdm.tqdm(users.items(), desc="Processing users"):
-    for hand,fingers in user_data["fingers"].items(): 
-        for finger_index, impressions in enumerate(fingers):
-            for impression_index, image in enumerate(impressions):
-                print("start")
-                print("User ID:", user_id)
-
-                # Get the first skeleton and its minutiae
-                skeleton = users[user_id]["fingers"][hand][finger_index][impression_index]['finger']
-                minutiae = users[user_id]["fingers"][hand][finger_index][impression_index]['minutiae']  # list of (x, y)
-                print(minutiae)
-                # Convert skeleton to BGR for color drawing
-                if len(skeleton.shape) == 2:
-                    skeleton_bgr = cv2.cvtColor(skeleton, cv2.COLOR_GRAY2BGR)
-                else:
-                    skeleton_bgr = skeleton.copy()
-
-                # Draw red circles for minutiae
-                for pt in minutiae:
-                    x, y = pt[0],pt[1]
-                    cv2.circle(skeleton_bgr, (int(x), int(y)), radius=2, color=(0, 0, 255), thickness=-1)  # red dot
-                # Display using matplotlib
-                plt.figure(figsize=(6, 6))
-                plt.imshow(cv2.cvtColor(skeleton_bgr, cv2.COLOR_BGR2RGB))
-                plt.title(f"User {user_id} - Minutiae on Skeleton")
-                plt.axis('off')
-                plt.show()
+from graph_minutiae import GraphMinutiae
+from model import *
+from load_save import *
+def run_complete_pipeline(analyzer, device='cpu'):
+    """
+    Run the complete fingerprint GNN pipeline.
     
-      # Remove to process all users
+    Args:
+        analyzer: MinutiaeROCAnalyzer instance with feature vectors computed
+        device: 'cuda' or 'cpu'
+    """
+    print("="*60)
+    print("FINGERPRINT GNN VERIFICATION PIPELINE")
+    print("="*60)
+    
+    analyzer.k_nearest_negihbors(k=4)
+    # Step 1: Build graphs
+    print("\n[Step 1/8] Building graphs...")
+    fingerprint_graphs = analyzer.graph_maker()
+    
+    # Step 2: Create pairs
+    print("\n[Step 2/8] Creating graph pairs...")
+    all_pairs = analyzer.create_graph_pairs(num_impostor_per_genuine=1)
+    print(f"\nTotal fingerprints (graphs) extracted: {len(fingerprint_graphs)} (should be {len(users)*8*5})")
+    if len(fingerprint_graphs) != len(users)*8*5:
+        print("⚠ Mismatch between expected and actual number of graphs! Check data pipeline.")
+
+    
+    # Step 3: Split data
+    print("\n[Step 3/8] Splitting data...")
+    train_pairs, val_pairs, test_pairs = analyzer.split_pairs_train_val_test(
+        all_pairs, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15
+    )
+
+    train_users, val_users, test_users = analyzer.get_user_splits()
+    
+    # Create the actual pair sets for val and test
+    #train_pairs, val_pairs, test_pairs = analyzer.split_pairs_by_user(all_pairs, train_users, val_users, test_users)
+
+
+    #train_user_ids = set(info['user_id'] for info in analyzer.fingerprint_graphs 
+                         #if any(pair[0].graph_id == info['graph_id'] for pair in train_pairs))
+
+    
+    # Step 4: Create training triplets using ONLY the training users
+    print("\n[Step 4/8] Creating triplets for training...")
+    #train_triplets = analyzer.create_triplets(train_user_ids)
+    train_graphs = [info for info in analyzer.fingerprint_graphs if info['user_id'] in train_users]
+    # Create a similar list of graphs for the validation users
+    val_graphs = [info for info in analyzer.fingerprint_graphs if info['user_id'] in val_users] # <-- ADD THIS LIN
+
+
+    # Step 4: Initialize model
+    print("\n[Step 4/8] Initializing model...")
+    model = initialize_model(device="cpu")
+    
+    
+    # Step 5: Train model
+    print("\n[Step 5/8] Training model...")
+    trained_model, history = train_model(
+        model, train_graphs, val_graphs,
+        num_epochs=100,
+        batch_size=32,
+        learning_rate=1e-3,
+        device="cpu"
+    )
+    
+    # Step 6: Plot training history
+    print("\n[Step 6/8] Plotting training history...")
+    plot_training_history(history)
+    
+    # Step 7: Evaluate on test set
+    print("\n[Step 7/8] Evaluating on test set...")
+    results = evaluate_model(trained_model, test_pairs, device="cpu")
+    
+    # Step 8: Save final model
+    print("\n[Step 8/8] Saving final model...")
+    torch.save({
+        'model_state_dict': trained_model.state_dict(),
+        'results': results,
+        'config': {
+            'node_features': 4,
+            'hidden_dim': 128,
+            'output_dim': 256,
+            'num_conv_layers': 4
+        }
+    }, 'final_fingerprint_gnn.pth')
+    
+    print("\n✓ Pipeline complete!")
+    print(f"✓ Operational threshold: {results['eer_threshold']:.4f}")
+    print(f"✓ Expected accuracy: {results['accuracy']*100:.2f}%")
+    print(f"✓ Model saved to: final_fingerprint_gnn.pth")
+    
+    return trained_model, results
+
+
+def plot_training_history(history):
+    """Plot training curves."""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    
+    ax1.plot(history['train_loss'], label='Train Loss', linewidth=2)
+    ax1.plot(history['val_loss'], label='Val Loss', linewidth=2)
+    ax1.set_xlabel('Epoch', fontsize=12)
+    ax1.set_ylabel('Loss', fontsize=12)
+    ax1.set_title('Training and Validation Loss', fontsize=14, fontweight='bold')
+    ax1.legend(fontsize=11)
+    ax1.grid(True, alpha=0.3)
+    
+    ax2.plot(history['val_avg_genuine_dist'], label='Train Avg Distance', linewidth=2)
+    ax2.plot(history['val_avg_impostor_dist'], label='Val Avg Distance', linewidth=2)
+    ax2.set_xlabel('Epoch', fontsize=12)
+    ax2.set_ylabel('Average Distance', fontsize=12)
+    ax2.set_title('Average Embedding Distance', fontsize=14, fontweight='bold')
+    ax2.legend(fontsize=11)
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('training_history.png', dpi=300)
+    plt.show()
 
 
 
+users=load_users_dictionary('processed_minutiae_data.pkl',True)
+print("---- Data Coverage Summary ----")
+print(f"Total users loaded: {len(users)}")
 
-#import pickle
-#import numpy as np
-#import matplotlib.pyplot as plt
-#import math
-#
-## Function to plot minutiae and orientation on skeleton
-#def plot_minutiae_orientations(skeleton, minutiae):
-#    # Convert grayscale skeleton to RGB for color drawing
-#    if len(skeleton.shape) == 2:
-#        skeleton_rgb = np.stack([skeleton]*3, axis=-1)
-#    else:
-#        skeleton_rgb = skeleton.copy()
-#
-#    fig, ax = plt.subplots(figsize=(8, 8))
-#    ax.imshow(skeleton_rgb, cmap='gray')
-#
-#    for m in minutiae:
-#        (x, y), angle, typ = m  # unpack
-#        ax.plot(x, y, 'ro')  # red dot for minutia
-#
-#        # Arrow for orientation (assume angle in radians)
-#        length = 15
-#        end_x = x + length * np.cos(angle*math)
-#        end_y = y + length * np.sin(angle*math)
-#        ax.arrow(x, y, end_x - x, end_y - y, head_width=4, head_length=6, fc='lime', ec='lime')
-#
-#    ax.set_title('Minutiae and Orientation Arrows on Skeleton')
-#    ax.axis('off')
-#    plt.show()
-#
-## Load the data (update with your actual file path)
-#file_path = r"C:\Users\kound\OneDrive\Desktop\fingerprint_mine\biometric_cache\processed_minutiae_data.pkl"
-#
-#with open(file_path, 'rb') as f:
-#    data = pickle.load(f)
-#
-## Plot for the first user and second fingerprint sample
-#for user_id, user_data in data.items():
-#    print("User ID:", user_id)
-#    
-#    skeleton = user_data['finger'][1]  # Assuming this is the skeleton image
-#    minutiae = user_data['minutiae'][1]  # Assuming list of [((x,y), angle, type)]
-#    
-#    plot_minutiae_orientations(skeleton, minutiae)
-#    #break  # Remove to process all users
+missing_finger_user = False
+missing_impression_user = False
+for uid, udata in list(users.items())[:5]:  # Check first 5 users; increase if needed
+    print(f"\nUser: {uid}")
+    total_impressions = 0
+    for hand in ["L", "R"]:
+        fingers = udata['fingers'][hand]
+        print(f"  {hand} hand -- Fingers: {len(fingers)} (should be <= 4 if split evenly)")
+        for idx, finger in enumerate(fingers):
+            n_impr = len(finger)
+            print(f"    Finger {idx}: {n_impr} impressions")
+            total_impressions += n_impr
+            if n_impr != 5:
+                missing_impression_user = True
+    print(f"  Total impressions for {uid}: {total_impressions} (should be 40, got {total_impressions})")
+    if total_impressions != 40:
+        missing_finger_user = True
+
+print("\n==== Summary for ALL users ====")
+all_fingers = 0
+all_impressions = 0
+for uid, udata in users.items():
+    for hand in ["L", "R"]:
+        fingers = udata['fingers'][hand]
+        all_fingers += len(fingers)
+        for finger in fingers:
+            all_impressions += len(finger)
+print(f"Total fingers (should be 8 × users): {all_fingers}")
+print(f"Total impressions (should be 40 × users): {all_impressions}")
+
+print("\n  Should be 8 fingers × 5 impressions per user = 40 fingerprints per user")
+print(f"  Expected total fingerprints (graphs) for {len(users)} users: {len(users)*8*5}")
+
+if missing_finger_user or missing_impression_user:
+    print("⚠ WARNING: Some users/fingers have missing or extra impressions!")
+else:
+    print("✓ All users and impressions accounted for.")
+
+analyse= GraphMinutiae(users)
+run_complete_pipeline(analyse)
