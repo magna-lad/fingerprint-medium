@@ -13,7 +13,7 @@ from load_save import *
 import numpy as np
 
 def main():
-    data_dir = r"C:\Users\kound\OneDrive\Desktop\10Classes\5classes"
+    data_dir = r"C:\Users\kound\OneDrive\Desktop\fingerprintdatabase\fingerprintdatabase"
     
     # Step 1: Load or process skeleton data
     print("Checking for cached skeleton data...")

@@ -1,4 +1,3 @@
-
 import numpy as np
 import torch
 import random
@@ -6,7 +5,7 @@ from tqdm import tqdm
 from torch_geometric.data import Data
 from scipy.spatial import Delaunay
 
-class GraphMinutiae:
+class GraphMinutiae:    
     """
     Handles the conversion of fingerprint minutiae data into graph representations
     and ensures proper, leak-free splitting of the data.
@@ -17,7 +16,7 @@ class GraphMinutiae:
         self.graph_metadata = {}
 
     @staticmethod
-    def normalize_minutiae_features(minutiae):
+    def old_normalize_minutiae_features(minutiae):
         """Normalizes minutiae features into a standard format."""
         coords = minutiae[:, :2].astype(np.float32)
         center = coords.mean(axis=0)
@@ -32,7 +31,56 @@ class GraphMinutiae:
         angle_cos = np.cos(angle_rad)
 
         return np.column_stack([norm_coords, type_onehot, angle_sin, angle_cos])
+    
+    @staticmethod
+    def normalize_minutiae_features(minutiae):
+        """
+        Normalizes minutiae features by centering them relative to a core point proxy.
+        This version avoids per-fingerprint scaling, providing a consistent geometric
+        representation for the model to learn from.
+        """
+        coords = minutiae[:, :2].astype(np.float32)
 
+        # --- NEW: Use the core point proxy as the origin (0,0) ---
+        core_point = GraphMinutiae.find_core_proxy(minutiae)
+        centered_coords = coords - core_point
+
+        # Minutiae type (one-hot encoded)
+        type_col = minutiae[:, 2].astype(int)
+        # Ensure it handles cases with only one type of minutia
+        type_onehot = np.zeros((len(type_col), 2), dtype=np.float32)
+        type_onehot[np.arange(len(type_col)), type_col] = 1.0
+
+        # Minutiae's own angle (sin/cos encoded)
+        angle_rad = np.deg2rad(minutiae[:, 3])
+        angle_sin = np.sin(angle_rad)
+        angle_cos = np.cos(angle_rad)
+
+        # --- NEW GLOBAL FEATURES (retained from your code, which is good) ---
+
+        # 1. Distance from each minutia to the new origin (the core)
+        # This is now a more meaningful feature since the coordinates are centered.
+        # We don't normalize it per-fingerprint anymore.
+        dist_to_core = np.linalg.norm(centered_coords, axis=1)
+        dist_to_core = dist_to_core.reshape(-1, 1)
+
+        # 2. Angle from each minutia TO the core
+        deltas = core_point - coords # Or -centered_coords
+        angle_to_core_rad = np.arctan2(deltas[:, 1], deltas[:, 0])
+        core_angle_sin = np.sin(angle_to_core_rad).reshape(-1, 1)
+        core_angle_cos = np.cos(angle_to_core_rad).reshape(-1, 1)
+
+        # --- Final feature vector (still 9 features, but more stable) ---
+        return np.column_stack([
+            centered_coords,    # features 0, 1 (NOT scaled per-print)
+            type_onehot,        # features 2, 3
+            angle_sin,          # feature 4
+            angle_cos,          # feature 5
+            dist_to_core,       # feature 6 (NOT scaled per-print)
+            core_angle_sin,     # feature 7
+            core_angle_cos      # feature 8
+        ])
+    
     
     def _build_single_graph(self, minutiae, graph_id):
         """Builds a single graph using robust Delaunay Triangulation."""
@@ -75,6 +123,32 @@ class GraphMinutiae:
         graph.graph_id = graph_id
         return graph
     
+
+    @staticmethod
+    def augment_minutiae(minutiae, max_rotation=30, max_translation=25):
+        """
+        Applies random rotation and translation to a set of minutiae.
+        """
+        angle_deg = np.random.uniform(-max_rotation, max_rotation)
+        angle_rad = np.radians(angle_deg)
+        c, s = np.cos(angle_rad), np.sin(angle_rad)
+        rotation_matrix = np.array([[c, -s], [s, c]])
+        coords = minutiae[:, :2]
+        center = coords.mean(axis=0)
+        rotated_coords = (coords - center) @ rotation_matrix.T + center
+        translation = np.random.uniform(-max_translation, max_translation, size=2)
+        final_coords = rotated_coords + translation
+        final_angles = (minutiae[:, 3] + angle_deg) % 360
+        augmented_minutiae = minutiae.copy()
+        augmented_minutiae[:, :2] = final_coords
+        augmented_minutiae[:, 3] = final_angles
+        return augmented_minutiae
+    
+    @staticmethod
+    def find_core_proxy(minutiae):
+        """Calculates the center of mass of minutiae as a proxy for the core point."""
+        return minutiae[:, :2].mean(axis=0)
+
     def graph_maker(self):
         """Iterates through all fingerprints and builds a list of graph objects."""
         print("Building graphs from all fingerprint minutiae...")
