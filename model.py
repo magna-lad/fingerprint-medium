@@ -165,7 +165,7 @@ def train_model(train_graphs_meta, val_pairs, raw_users_data, device, num_epochs
         history['val_genuine_dist'].append(avg_genuine); history['val_impostor_dist'].append(avg_impostor)
         print(f"Train Loss: {avg_train_loss:.4f} | Genuine: {avg_genuine:.4f} | Impostor: {avg_impostor:.4f} | GAP: {current_val_gap:.4f}")
 
-        # --- IMPROVEMENT AND SAVE BEST MODEL ---
+        # --- CHECK FOR IMPROVEMENT AND SAVE BEST MODEL ---
         if current_val_gap > best_val_gap:
             best_val_gap = current_val_gap
             patience_counter = 0
