@@ -1,5 +1,5 @@
 from graph_minutiae import GraphMinutiae
-from model import *
+from xgboost_feature_extractor import *
 from load_save import *
 def run_complete_pipeline(analyzer, device='cpu'):
     """
