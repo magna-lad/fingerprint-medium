@@ -312,7 +312,8 @@ class skeleton_maker:
                         cv2.circle(result, (i,j), radius=3, color=colors[minutiae], thickness=2)
                         self.y_cord,self.x_cord = i,j
                         self.type = minutiae
-                        self.angle_minutiae = self.orientation(j,i) # to these coordinates of the image we will find the angle of orientation via sobel operators on the skeleton image
+                        # NEW
+                        self.angle_minutiae = self.angle_gabor[j // self.block][i // self.block] # to these coordinates of the image we will find the angle of orientation via sobel operators on the skeleton image
                         length = 10  # length of angle line
                         end_x = int(i + length * math.cos(self.angle_minutiae))
                         end_y = int(j + length * math.sin(self.angle_minutiae))

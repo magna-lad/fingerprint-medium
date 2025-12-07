@@ -22,13 +22,16 @@ class GraphMinutiae:
         self.graph_metadata = {}
 
     @staticmethod
-    def normalize_minutiae_features(minutiae):
+    def normalize_minutiae_features(minutiae,orientation_map):
         coords = minutiae[:, :2].astype(np.float32)
         # --- IMPROVEMENT HOOK ---
         # A true core point detected via Poincaré Index would replace find_core_proxy.
         # For example: core_point = find_true_core(orientation_map)
         # This would make the 'centered_coords' and 'dist_to_core' features far more robust.
         core_point = GraphMinutiae.find_core_proxy(minutiae)
+        core_point = GraphMinutiae.find_true_core(orientation_map)
+        if core_point is None:
+            core_point = GraphMinutiae.find_core_proxy(minutiae)
         centered_coords = coords - core_point
         type_col = minutiae[:, 2].astype(int)
         type_onehot = np.zeros((len(type_col), 2), dtype=np.float32)
@@ -46,12 +49,15 @@ class GraphMinutiae:
         return np.column_stack([centered_coords, type_onehot, angle_sin, angle_cos, dist_to_core, core_angle_sin, core_angle_cos, minutiae[:, 2].astype(np.float32)])
 
 
-    def _build_single_graph(self, minutiae, graph_id):
+    def _build_single_graph(self, minutiae, orientation_map, graph_id):
         """Builds a single graph using robust Delaunay Triangulation."""
+        MINUTIAE_THRESHOLD = 20
+        if minutiae is None or len(minutiae) < MINUTIAE_THRESHOLD:
+            return None # Discard this low-quality graph
         if minutiae is None or len(minutiae) < 4:
             return None
         # The minutiae array passed here can be the original or an augmented one.
-        normalized_features = self.normalize_minutiae_features(minutiae)
+        normalized_features = self.normalize_minutiae_features(minutiae,orientation_map)
         coords = normalized_features[:, :2]
 
         try:
@@ -84,6 +90,7 @@ class GraphMinutiae:
         graph.graph_id = graph_id
         # Store raw minutiae in graph object for potential augmentation later
         graph.raw_minutiae = minutiae
+        graph.orientation_map = orientation_map
         return graph
 
     @staticmethod
@@ -121,7 +128,8 @@ class GraphMinutiae:
                     for impr_idx, impression_data in enumerate(impressions):
                         graph_id = f"{uid}_{hand}_{finger_idx}_{impr_idx}"
                         minutiae = impression_data["minutiae"]
-                        graph = self._build_single_graph(minutiae, graph_id)
+                        orientation_map = impression_data["orientation_map"] 
+                        graph = self._build_single_graph(minutiae, orientation_map, graph_id)
                         if graph is not None:
                             meta_info = {'graph': graph, 'user_id': uid, 'hand': hand,
                                          'finger_idx': finger_idx, 'impression_idx': impr_idx, 'graph_id': graph_id}
@@ -189,3 +197,99 @@ class GraphMinutiae:
             elif uid1 in test_users and uid2 in test_users: test_pairs.append((g1, g2, label))
         print(f"Pair Split: {len(train_pairs)} train, {len(val_pairs)} validation, {len(test_pairs)} test.")
         return train_pairs, val_pairs, test_pairs
+    
+
+    # Place this inside the GraphMinutiae class in graph_minutiae.py
+
+    @staticmethod
+    def find_true_core(orientation_map, block_size=16):
+        """
+        Calculates the location of the core point using the Poincaré Index.
+
+        This method iterates through an orientation map, calculates the Poincaré
+        Index for each point, and identifies singularities (cores and deltas).
+
+        Input:
+            orientation_map: The 2D numpy array from skeleton_maker (self.angle_gabor).
+                             Angles are expected to be in radians.
+            block_size: The pixel width/height of a single block in the orientation map,
+                        used to scale the coordinates back to the original image size.
+
+        Output:
+            A tuple (x, y) of the most likely core's coordinates in the original
+            image space, or None if no core is found.
+        """
+        # Import numpy here if it's not at the top of the file
+        import numpy as np
+
+        # The orientation map values are doubled for Poincaré calculation to handle the 180-degree ambiguity
+        doubled_orientation = 2 * orientation_map
+
+        rows, cols = doubled_orientation.shape
+
+        # Store found singularities
+        cores = []
+        deltas = []
+
+        # Iterate through the interior of the map (excluding borders)
+        # because we need a 3x3 window around each point.
+        for r in range(1, rows - 1):
+            for c in range(1, cols - 1):
+
+                # Define the 8-neighbor path around the current cell (r, c) in clockwise order
+                path = [
+                    doubled_orientation[r - 1, c - 1], doubled_orientation[r - 1, c],
+                    doubled_orientation[r - 1, c + 1], doubled_orientation[r, c + 1],
+                    doubled_orientation[r + 1, c + 1], doubled_orientation[r + 1, c],
+                    doubled_orientation[r + 1, c - 1], doubled_orientation[r, c - 1],
+                ]
+
+                # --- Calculate the Poincaré Index by summing angle differences ---
+                index_sum = 0.0
+                for k in range(8):
+                    # Get the angle difference between the current and next point on the path
+                    # The modulo operator (%) closes the loop, connecting the last point back to the first.
+                    diff = path[(k + 1) % 8] - path[k]
+
+                    # --- Handle Angle Wrapping ---
+                    # This is the most critical step. A simple subtraction is not enough for circular data.
+                    # We need to find the shortest path between angles.
+                    if diff > np.pi:
+                        diff -= 2 * np.pi
+                    elif diff < -np.pi:
+                        diff += 2 * np.pi
+
+                    index_sum += diff
+
+                # --- Classify the Singularity ---
+                # Divide by 2*pi to get the index. We check if it's close to the theoretical values.
+                # Index is ~0.5 for a core, ~-0.5 for a delta, ~0 for a normal point.
+                # A tolerance is needed for discrete data.
+                tolerance = 0.1 
+
+                # Core: Poincaré index is +1/2 (sum is pi)
+                if 0.5 - tolerance < (index_sum / (2 * np.pi)) < 0.5 + tolerance:
+                    cores.append((r, c))
+
+                # Delta: Poincaré index is -1/2 (sum is -pi)
+                elif -0.5 - tolerance < (index_sum / (2 * np.pi)) < -0.5 + tolerance:
+                    deltas.append((r, c))
+
+        # --- Select the Best Core ---
+        if not cores:
+            return None # No cores found
+
+        # If multiple cores are found (e.g., in an arch or due to noise), a common
+        # heuristic is to choose the "lowest" one (highest row index), as this is
+        # often the most dominant and stable core.
+        cores.sort(key=lambda item: item[0], reverse=True)
+        best_core_r, best_core_c = cores[0]
+
+        # --- Scale Coordinates ---
+        # Convert the core's location from the small orientation map grid back
+        # to the full-size image coordinate system. We add half a block size
+        # to center the coordinate within its block.
+        scaled_x = best_core_c * block_size + (block_size // 2)
+        scaled_y = best_core_r * block_size + (block_size // 2)
+
+        return (scaled_x, scaled_y)
