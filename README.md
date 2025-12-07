@@ -284,6 +284,7 @@ For graph processing:
 1. Download / prepare your fingerprint dataset (e.g., a Kaggle fingerprint database).
 2. Organize it as:
 
+```
 <DATA_DIR>/
 ├─ 000/
 │ ├─ L/
@@ -292,7 +293,7 @@ For graph processing:
 │ ├─ 000_R0_0.bmp ... 000_R3_4.bmp
 ├─ 001/
 └─ ...
-
+```
 
 3. In `main.py`, set `data_dir` to your `<DATA_DIR>` path.
 
@@ -327,13 +328,3 @@ This will:
 
 ---
 
-## 7. Notes & possible extensions
-
-- Swap XGBoost for LightGBM by changing the model initialization in `run_xgboost_pipeline.py`.
-- Plug in alternative graph construction methods (e.g., k-NN graphs) in `graph_minutiae.py`.
-- Expose a clean inference API that:
-  - Takes two raw fingerprint images.
-  - Runs the same preprocessing + graph construction.
-  - Produces a similarity score via the saved model.
-
----
