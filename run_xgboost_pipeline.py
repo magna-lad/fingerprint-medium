@@ -1,5 +1,3 @@
-# --- run_xgboost_pipeline.py ---
-
 import numpy as np
 import xgboost as xgb
 import lightgbm as lgb # Import LightGBM as an alternative
@@ -10,7 +8,6 @@ from sklearn.metrics import roc_curve, auc, accuracy_score
 from sklearn.model_selection import RandomizedSearchCV # Using RandomizedSearch
 from scipy.stats import uniform, randint
 
-# --- Local Imports ---
 from graph_minutiae import GraphMinutiae
 from load_save import load_users_dictionary
 from xgboost_feature_extractor import create_feature_vector_for_pair
@@ -97,9 +94,17 @@ def evaluate_xgboost_model(model, X_test, y_test, test_pairs):
 def run_xgboost_fingerprint_pipeline():
     print("="*60); print(" FINGERPRINT ML PIPELINE (TRAINING & SAVING) "); print("="*60)
 
-    print("\n[1/5] Loading data..."); users = load_users_dictionary('processed_data.pkl', True)
+    #### start 
+
+    print("\n[1/5] Loading data...") 
+    users = load_users_dictionary('processed_data.pkl', True)
     analyzer = GraphMinutiae(users)
-    print("\n[2/5] Building graphs..."); analyzer.graph_maker()
+
+
+    print("\n[2/5] Building graphs...")
+    analyzer.graph_maker()
+
+
     print("\n[3/5] Creating pairs for evaluation..."); all_pairs = analyzer.create_graph_pairs(num_impostors_per_genuine=4)
     print("\n[4/5] Splitting users for disjoint sets...")
     train_users, _, test_users = analyzer.get_user_splits()

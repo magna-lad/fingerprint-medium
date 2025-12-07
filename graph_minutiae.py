@@ -1,8 +1,3 @@
-# --- graph_minutiae.py ---
-# This file remains largely the same as your provided version.
-# The key is that the functions it provides, especially `augment_minutiae`,
-# are now correctly utilized in the main training pipeline.
-
 import numpy as np
 import torch
 from torch_geometric.data import Data
@@ -53,10 +48,10 @@ class GraphMinutiae:
         """Builds a single graph using robust Delaunay Triangulation."""
         MINUTIAE_THRESHOLD = 20
         if minutiae is None or len(minutiae) < MINUTIAE_THRESHOLD:
-            return None # Discard this low-quality graph
+            return None # Discard low-quality graph
         if minutiae is None or len(minutiae) < 4:
             return None
-        # The minutiae array passed here can be the original or an augmented one.
+        
         normalized_features = self.normalize_minutiae_features(minutiae,orientation_map)
         coords = normalized_features[:, :2]
 
