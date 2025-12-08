@@ -8,7 +8,7 @@ from load_save import *
 import numpy as np
 
 def main():
-    data_dir = r"/kaggle/input/fingerprint/fingerprintdatabase" # for kaggle 
+    data_dir = r"/kaggle/input/400classes/fingerdata" # for kaggle 
     
     # Step 1: Load or process skeleton data
     print("Checking for cached skeleton data...")
