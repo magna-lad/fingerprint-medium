@@ -4,3 +4,5 @@ krkr.py
 tri.py
 trial.py
 trial2.py
+xgboost_predictions.pkl
+best_cnn.pth

@@ -2,27 +2,22 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import cv2 
 from torch.utils.data import Dataset
 from torchvision import transforms
 
+# ... (Keep FingerprintTextureDataset exactly the same as before) ...
 class FingerprintTextureDataset(Dataset):
-    """
-    PyTorch Dataset that loads SKELETON images.
-    Uses 'skeleton' instead of 'orientation_map' for robust visual matching.
-    """
     def __init__(self, pairs, core_finder_func, augment=False):
         self.pairs = pairs
         self.core_finder = core_finder_func 
         self.img_size = 64 
         self.augment = augment
 
-        # --- DATA AUGMENTATION ---
-        # Rotation works perfectly on skeletons!
         if self.augment:
             self.transform = transforms.Compose([
-                transforms.RandomRotation(degrees=15),
-                transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
-                # No ColorJitter needed for binary images
+                transforms.RandomRotation(degrees=20),
+                transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
             ])
         else:
             self.transform = None
@@ -31,78 +26,98 @@ class FingerprintTextureDataset(Dataset):
         return len(self.pairs)
         
     def preprocess_image(self, img_data, orientation_map):
-        # 1. We still need orientation_map just to find the core coordinates
-        core = self.core_finder(orientation_map, block_size=16) # Original block size logic
-        
+        core = self.core_finder(orientation_map, block_size=16) 
         if core is None:
             cy, cx = img_data.shape[0]//2, img_data.shape[1]//2
         else:
-            # Unpack (x, y, orientation) -> we only need x,y
             cx, cy, _ = core
             
-        # 2. Pad and Crop the SKELETON
         half = self.img_size // 2
         padded = np.pad(img_data, ((half, half), (half, half)), mode='constant')
         cy += half
         cx += half
-        
         patch = padded[cy-half:cy+half, cx-half:cx+half]
         
-        # 3. Normalize Binary Image (0-255 -> 0-1)
-        patch = patch.astype(np.float32) / 255.0
+        # Thicken
+        kernel = np.ones((3,3), np.uint8)
+        patch_uint8 = patch.astype(np.uint8)
+        patch_thick = cv2.dilate(patch_uint8, kernel, iterations=1)
+
+        patch = patch_thick.astype(np.float32) / 255.0
         return patch
 
     def __getitem__(self, idx):
         g1, g2, label = self.pairs[idx]
+        img1 = torch.from_numpy(self.preprocess_image(g1.skeleton, g1.orientation_map)).unsqueeze(0)
+        img2 = torch.from_numpy(self.preprocess_image(g2.skeleton, g2.orientation_map)).unsqueeze(0)
         
-        # USE SKELETON (Visual Ridge Pattern)
-        img1_raw = g1.skeleton
-        img2_raw = g2.skeleton
-        
-        # Extract patches (using orientation map only for centering)
-        np_img1 = self.preprocess_image(img1_raw, g1.orientation_map)
-        np_img2 = self.preprocess_image(img2_raw, g2.orientation_map)
-        
-        # Convert to Tensor (1, 64, 64)
-        img1 = torch.from_numpy(np_img1).unsqueeze(0)
-        img2 = torch.from_numpy(np_img2).unsqueeze(0)
-        
-        # Apply Augmentation
         if self.transform:
             img1 = self.transform(img1)
             img2 = self.transform(img2)
         
         return img1, img2, torch.tensor(label, dtype=torch.float32)
 
-class TinyCNN(nn.Module):
-    """
-    Standard Siamese CNN for ridge pattern matching.
-    """
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels)
+            )
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = F.relu(out)
+        return out
+
+class DeeperCNN(nn.Module):
     def __init__(self):
-        super(TinyCNN, self).__init__()
-        
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
+        super(DeeperCNN, self).__init__()
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(32)
-        self.pool = nn.MaxPool2d(2, 2)
         
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(64)
+        self.layer1 = self._make_layer(32, 64, stride=2) 
+        self.layer2 = self._make_layer(64, 128, stride=2)
+        self.layer3 = self._make_layer(128, 256, stride=2)
         
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm2d(128)
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         
-        self.fc = nn.Linear(128 * 8 * 8, 256)
-        self.dropout = nn.Dropout(0.4)
-        self.out = nn.Linear(256, 128) 
+        self.fc = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.3), # Reduced dropout slightly
+            nn.Linear(256, 128) 
+        )
+
+    def _make_layer(self, in_dim, out_dim, stride):
+        return nn.Sequential(
+            ResidualBlock(in_dim, out_dim, stride),
+            ResidualBlock(out_dim, out_dim, stride=1)
+        )
 
     def forward_one(self, x):
-        x = self.pool(F.relu(self.bn1(self.conv1(x))))
-        x = self.pool(F.relu(self.bn2(self.conv2(x))))
-        x = self.pool(F.relu(self.bn3(self.conv3(x))))
-        x = x.view(x.size(0), -1) 
-        x = F.relu(self.fc(x))
-        x = self.dropout(x)
-        x = self.out(x)
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.avg_pool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        
+        # --- NEW: L2 NORMALIZATION ---
+        # Forces embeddings to lie on a hypersphere. 
+        # Prevents "All Zeros" collapse.
+        x = F.normalize(x, p=2, dim=1) 
         return x
 
     def forward(self, img1, img2):
@@ -111,8 +126,9 @@ class TinyCNN(nn.Module):
         dist = F.pairwise_distance(emb1, emb2)
         return dist
 
+# ... (ContrastiveLoss and EarlyStopping remain same) ...
 class ContrastiveLoss(torch.nn.Module):
-    def __init__(self, margin=2.0):
+    def __init__(self, margin=1.0): # Reduced margin because vectors are normalized now!
         super(ContrastiveLoss, self).__init__()
         self.margin = margin
 
@@ -120,3 +136,29 @@ class ContrastiveLoss(torch.nn.Module):
         loss_contrastive = torch.mean((label) * torch.pow(euclidean_distance, 2) +
                                       (1-label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))
         return loss_contrastive
+
+class EarlyStopping:
+    def __init__(self, patience=5, delta=0, path='best_cnn.pth'):
+        self.patience = patience
+        self.delta = delta
+        self.path = path
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+
+    def __call__(self, val_loss, model):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+            self.save_checkpoint(val_loss, model)
+        elif val_loss > self.best_loss + self.delta:
+            self.counter += 1
+            print(f'   EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_loss = val_loss
+            self.save_checkpoint(val_loss, model)
+            self.counter = 0
+
+    def save_checkpoint(self, val_loss, model):
+        torch.save(model.state_dict(), self.path)
