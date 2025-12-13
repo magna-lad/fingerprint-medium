@@ -23,7 +23,7 @@ def prepare_xgb_data(pairs, is_training=False):
     return np.array(X), np.array(y)
 
 def run_hybrid_system():
-    print("="*60); print(" HYBRID PIPELINE (BALANCED BATCH SAMPLING) "); print("="*60)
+    print("="*60); print(" HYBRID PIPELINE (ROBUST RE-TRY) "); print("="*60)
     
     # --- A. LOADING ---
     print("\n[A] Loading Data...")
@@ -31,6 +31,7 @@ def run_hybrid_system():
     analyzer = GraphMinutiae(users)
     analyzer.graph_maker()
     
+    # Create pairs
     all_pairs = analyzer.create_graph_pairs(num_impostors_per_genuine=3)
     train_users, val_users, test_users = analyzer.get_user_splits()
     
@@ -53,7 +54,7 @@ def run_hybrid_system():
     xgb_probs = xgb_model.predict_proba(X_test_xgb)[:, 1]
     
     # --- C. TRAIN CNN (Balanced Sampling) ---
-    print("\n[C] Training CNN (Balanced Batch Approach)...")
+    print("\n[C] Training CNN (Center-Mass Crop + Balanced Batch)...")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
@@ -61,41 +62,45 @@ def run_hybrid_system():
     train_dataset = FingerprintTextureDataset(train_pairs, GraphMinutiae.find_true_core, augment=True)
     val_dataset = FingerprintTextureDataset(val_pairs, GraphMinutiae.find_true_core, augment=False)
     
-    # 2. CALCULATE SAMPLER WEIGHTS
-    # We want 50/50 balance in every batch.
+    # 2. CALCULATE SAMPLER WEIGHTS (50/50 Balance)
     y_train = [label for _, _, label in train_pairs]
     class_counts = np.bincount(y_train)
-    num_samples = len(y_train)
+    weights = 1. / class_counts
+    samples_weights = torch.from_numpy(np.array([weights[t] for t in y_train])).double()
+    sampler = WeightedRandomSampler(samples_weights, len(samples_weights))
     
-    # Weight = Total / (Number of Class X)
-    class_weights = 1. / class_counts
-    samples_weights = [class_weights[label] for label in y_train]
-    samples_weights = torch.from_numpy(np.array(samples_weights)).double()
-    
-    sampler = WeightedRandomSampler(samples_weights, num_samples)
-    
-    # 3. Loaders (Note: shuffle=False when using sampler)
+    # 3. Loaders
     train_loader = DataLoader(train_dataset, batch_size=64, sampler=sampler)
     val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
     
     cnn = DeeperCNN().to(device)
+    criterion = torch.nn.BCEWithLogitsLoss()
     
-    # --- CHANGED: Remove pos_weight ---
-    # Since batches are now balanced (50% pos, 50% neg) by the sampler, 
-    # we use standard BCE. This aligns the probabilities correctly.
-    criterion = torch.nn.BCEWithLogitsLoss() 
-    
+    # Optimizer (Start conservative)
     optimizer = torch.optim.AdamW(cnn.parameters(), lr=0.0001, weight_decay=1e-3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', patience=3, factor=0.5, verbose=True
     )
-    stopper = EarlyStopping(patience=10, path='best_cnn.pth')
+    stopper = EarlyStopping(patience=8, path='best_cnn.pth')
     
+    # --- CRITICAL: DEBUG DATA BEFORE TRAIN ---
+    print("\n--- DEBUG: Checking Data Integrity ---")
+    data_iter = iter(train_loader)
+    d_img1, d_img2, d_lbl = next(data_iter)
+    
+    print(f"Batch Shape: {d_img1.shape}")
+    print(f"Batch Mean: {d_img1.mean():.4f}, Max: {d_img1.max():.4f}")
+    if d_img1.max() == 0:
+        print("ERROR: INPUT IMAGES ARE ALL BLACK! Check Preprocessing.")
+        return # Stop execution
+    else:
+        print("Images contain data. Starting training...\n")
+
     cnn.train()
     epochs = 50
     
     for epoch in range(epochs):
-        # --- TRAINING STEP ---
+        # --- TRAINING ---
         cnn.train()
         train_loss = 0
         correct = 0
@@ -112,7 +117,6 @@ def run_hybrid_system():
             
             train_loss += loss.item()
             
-            # Accuracy
             probs = torch.sigmoid(logits)
             preds = (probs > 0.5).float()
             correct += (preds == label).sum().item()
@@ -121,7 +125,7 @@ def run_hybrid_system():
         avg_train = train_loss / len(train_loader)
         train_acc = correct / total
         
-        # --- VALIDATION STEP ---
+        # --- VALIDATION ---
         cnn.eval()
         val_loss = 0
         val_correct = 0
@@ -145,8 +149,7 @@ def run_hybrid_system():
         scheduler.step(avg_val)
         
         print(f"   Train Loss: {avg_train:.4f} (Acc: {train_acc:.2%}) | "
-              f"Val Loss: {avg_val:.4f} (Acc: {val_acc:.2%}) | "
-              f"LR: {optimizer.param_groups[0]['lr']:.6f}")
+              f"Val Loss: {avg_val:.4f} (Acc: {val_acc:.2%}) | LR: {optimizer.param_groups[0]['lr']:.6f}")
         
         stopper(avg_val, cnn)
         
@@ -183,13 +186,15 @@ def run_hybrid_system():
     
     plt.figure(figsize=(10, 6))
     plt.plot(fpr, tpr, label=f'Hybrid System (AUC={auc_score:.4f})', linewidth=3, color='purple')
+    
     fpr_x, tpr_x, _ = roc_curve(y_test_xgb, xgb_probs)
     plt.plot(fpr_x, tpr_x, label=f'XGBoost (AUC={auc(fpr_x, tpr_x):.4f})', linestyle='--')
+    
     fpr_c, tpr_c, _ = roc_curve(y_test_xgb, cnn_probs)
     plt.plot(fpr_c, tpr_c, label=f'CNN (AUC={auc(fpr_c, tpr_c):.4f})', linestyle='--')
     
     plt.plot([0, 1], [0, 1], 'k--', label='Random')
-    plt.title('Hybrid Fingerprint Matching (Balanced)')
+    plt.title('Hybrid Fingerprint Matching (CenterCrop + Balanced)')
     plt.xlabel('FPR'); plt.ylabel('TPR')
     plt.legend(); plt.grid(True)
     plt.show()

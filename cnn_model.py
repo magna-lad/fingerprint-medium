@@ -13,12 +13,11 @@ class FingerprintTextureDataset(Dataset):
         self.img_size = 64 
         self.augment = augment
 
+        # Gentler augmentation for sparse skeletons
         if self.augment:
             self.transform = transforms.Compose([
-                # Gentle rotation
                 transforms.RandomRotation(degrees=10),
-                # Very slight translation/scale to simulate finger placement diffs
-                transforms.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.95, 1.05)),
+                transforms.RandomAffine(degrees=0, translate=(0.05, 0.05)),
             ])
         else:
             self.transform = None
@@ -27,22 +26,44 @@ class FingerprintTextureDataset(Dataset):
         return len(self.pairs)
         
     def preprocess_image(self, img_data, orientation_map):
-        if img_data is None or img_data.size == 0:
+        # 1. Sanity Check: Is there data?
+        if img_data is None or img_data.size == 0 or np.sum(img_data) == 0:
             return np.zeros((self.img_size, self.img_size), dtype=np.float32)
 
-        core = self.core_finder(orientation_map, block_size=16) 
-        if core is None:
-            cy, cx = img_data.shape[0]//2, img_data.shape[1]//2
-        else:
-            cx, cy, _ = core
+        # 2. INTELLIGENT CROPPING
+        # Skeletons are sparse. We must find where the ink actually is.
+        # We calculate the Center of Mass (centroid) of the white pixels.
+        try:
+            # Convert to uint8 for opencv
+            img_u8 = img_data.astype(np.uint8)
+            M = cv2.moments(img_u8)
             
+            if M["m00"] != 0:
+                # Centroid found
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+            else:
+                # Fallback: finding the core via orientation map
+                core = self.core_finder(orientation_map, block_size=16) 
+                if core:
+                    cx, cy, _ = core
+                else:
+                    cy, cx = img_data.shape[0]//2, img_data.shape[1]//2
+        except:
+            cy, cx = img_data.shape[0]//2, img_data.shape[1]//2
+            
+        # 3. Padding & Cropping around the Centroid/Core
         half = self.img_size // 2
         padded = np.pad(img_data, ((half, half), (half, half)), mode='constant')
+        # Adjust coordinates for padding
         cy += half
         cx += half
+        
         patch = padded[cy-half:cy+half, cx-half:cx+half]
         
-        # Thicken ridges slightly
+        # 4. CRITICAL: Dilation
+        # Skeletons are 1px thin. Convolutional strides might skip them.
+        # We thicken them to 3px so the CNN sees them clearly.
         kernel = np.ones((3,3), np.uint8)
         patch_uint8 = patch.astype(np.uint8)
         patch_thick = cv2.dilate(patch_uint8, kernel, iterations=1)
@@ -80,10 +101,10 @@ class ResidualBlock(nn.Module):
             )
 
     def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
+        out = F.leaky_relu(self.bn1(self.conv1(x)), 0.1)
         out = self.bn2(self.conv2(out))
         out += self.shortcut(x)
-        out = F.relu(out)
+        out = F.leaky_relu(out, 0.1)
         return out
 
 class DeeperCNN(nn.Module):
@@ -92,25 +113,29 @@ class DeeperCNN(nn.Module):
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(32)
         
+        # Use MaxPool instead of strided conv for the first downsampling
+        # MaxPool is better at preserving sparse features (white lines on black)
         self.layer1 = self._make_layer(32, 64, stride=2) 
         self.layer2 = self._make_layer(64, 128, stride=2)
         self.layer3 = self._make_layer(128, 256, stride=2)
         
-        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.avg_pool = nn.AdaptiveMaxPool2d((1, 1)) # Changed to MaxPool
         
+        # Embedder
         self.embedder = nn.Sequential(
             nn.Linear(256, 256),
             nn.BatchNorm1d(256),
-            nn.ReLU(),
-            nn.Dropout(0.5) 
+            nn.LeakyReLU(0.1),
+            # No Dropout here (keep features deterministic)
         )
         
-        # Classifier now takes Normalized inputs, so values are small
+        # Classifier Head
+        # Inputs: Emb1 (256) + Emb2 (256) + Diff (256) = 768
         self.classifier = nn.Sequential(
-            nn.Linear(256, 64),
-            nn.ReLU(),
+            nn.Linear(256 * 3, 128),
+            nn.LeakyReLU(0.1),
             nn.Dropout(0.5),
-            nn.Linear(64, 1)
+            nn.Linear(128, 1)
         )
 
     def _make_layer(self, in_dim, out_dim, stride):
@@ -120,24 +145,26 @@ class DeeperCNN(nn.Module):
         )
 
     def forward_one(self, x):
-        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.leaky_relu(self.bn1(self.conv1(x)), 0.1)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.avg_pool(x)
         x = x.view(x.size(0), -1)
         x = self.embedder(x)
-        # --- RE-ADDED NORMALIZATION ---
-        # This is critical for stable distance learning
-        x = F.normalize(x, p=2, dim=1)
-        return x
+        # We normalize to prevent one vector exploding in magnitude
+        return F.normalize(x, p=2, dim=1)
 
     def forward(self, img1, img2):
         emb1 = self.forward_one(img1)
         emb2 = self.forward_one(img2)
         
+        # Robust Fusion: Concatenate features
+        # This tells the classifier: "Here is A, Here is B, Here is how they differ"
         diff = torch.abs(emb1 - emb2)
-        logits = self.classifier(diff)
+        combined = torch.cat((emb1, emb2, diff), dim=1)
+        
+        logits = self.classifier(combined)
         return logits.squeeze()
 
 class EarlyStopping:
