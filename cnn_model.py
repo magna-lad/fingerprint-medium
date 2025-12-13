@@ -1,4 +1,3 @@
---- START OF FILE cnn_model.py ---
 
 import torch
 import torch.nn as nn
