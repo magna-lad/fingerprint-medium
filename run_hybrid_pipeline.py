@@ -27,7 +27,7 @@ def run_hybrid_system():
     
     # --- A. LOADING ---
     print("\n[A] Loading Data...")
-    users = load_users_dictionary('/kaggle/input/processed-data/processed_data.pkl', True)
+    users = load_users_dictionary('processed_data.pkl', True)
     analyzer = GraphMinutiae(users)
     analyzer.graph_maker()
     
@@ -79,7 +79,7 @@ def run_hybrid_system():
     # Optimizer (Start conservative)
     optimizer = torch.optim.AdamW(cnn.parameters(), lr=0.0001, weight_decay=1e-3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=3, factor=0.5, verbose=True
+        optimizer, mode='min', patience=3, factor=0.5
     )
     stopper = EarlyStopping(patience=8, path='best_cnn.pth')
     

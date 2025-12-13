@@ -1,3 +1,5 @@
+--- START OF FILE cnn_model.py ---
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,7 +15,7 @@ class FingerprintTextureDataset(Dataset):
         self.img_size = 64 
         self.augment = augment
 
-        # Gentler augmentation for sparse skeletons
+        # Gentler augmentation
         if self.augment:
             self.transform = transforms.Compose([
                 transforms.RandomRotation(degrees=10),
@@ -26,24 +28,39 @@ class FingerprintTextureDataset(Dataset):
         return len(self.pairs)
         
     def preprocess_image(self, img_data, orientation_map):
-        # 1. Sanity Check: Is there data?
-        if img_data is None or img_data.size == 0 or np.sum(img_data) == 0:
+        # 1. Sanity Check
+        if img_data is None or img_data.size == 0:
             return np.zeros((self.img_size, self.img_size), dtype=np.float32)
 
+        # ---------------------------------------------------------
+        # FIX START: INVERT IMAGE IF BACKGROUND IS WHITE
+        # ---------------------------------------------------------
+        img_data = img_data.astype(np.float32)
+        
+        # Check if the image is mostly white (background=255)
+        # Skeletons are sparse, so mean should be low (<50) if ridges are white.
+        # If mean is high (>100), it's a white background.
+        if np.mean(img_data) > 100:
+            img_data = 255.0 - img_data  # Invert: Ridges become 255, BG becomes 0
+            
+        # Threshold to ensure binary (clean up gray noise)
+        img_data[img_data > 127] = 255.0
+        img_data[img_data <= 127] = 0.0
+        # ---------------------------------------------------------
+        # FIX END
+        # ---------------------------------------------------------
+
         # 2. INTELLIGENT CROPPING
-        # Skeletons are sparse. We must find where the ink actually is.
-        # We calculate the Center of Mass (centroid) of the white pixels.
         try:
-            # Convert to uint8 for opencv
+            # Convert to uint8 for opencv moments
             img_u8 = img_data.astype(np.uint8)
             M = cv2.moments(img_u8)
             
             if M["m00"] != 0:
-                # Centroid found
                 cx = int(M["m10"] / M["m00"])
                 cy = int(M["m01"] / M["m00"])
             else:
-                # Fallback: finding the core via orientation map
+                # Fallback to orientation core
                 core = self.core_finder(orientation_map, block_size=16) 
                 if core:
                     cx, cy, _ = core
@@ -52,22 +69,21 @@ class FingerprintTextureDataset(Dataset):
         except:
             cy, cx = img_data.shape[0]//2, img_data.shape[1]//2
             
-        # 3. Padding & Cropping around the Centroid/Core
+        # 3. Padding & Cropping
         half = self.img_size // 2
-        padded = np.pad(img_data, ((half, half), (half, half)), mode='constant')
-        # Adjust coordinates for padding
+        padded = np.pad(img_data, ((half, half), (half, half)), mode='constant', constant_values=0)
+        
         cy += half
         cx += half
         
         patch = padded[cy-half:cy+half, cx-half:cx+half]
         
-        # 4. CRITICAL: Dilation
-        # Skeletons are 1px thin. Convolutional strides might skip them.
-        # We thicken them to 3px so the CNN sees them clearly.
+        # 4. Dilation (Now works correctly because ridges are White)
         kernel = np.ones((3,3), np.uint8)
         patch_uint8 = patch.astype(np.uint8)
         patch_thick = cv2.dilate(patch_uint8, kernel, iterations=1)
 
+        # Normalize 0.0 to 1.0
         patch = patch_thick.astype(np.float32) / 255.0
         return patch
 
@@ -85,6 +101,7 @@ class FingerprintTextureDataset(Dataset):
         
         return img1, img2, torch.tensor(label, dtype=torch.float32)
 
+# ... (Keep ResidualBlock, DeeperCNN, and EarlyStopping exactly as they were) ...
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1):
         super(ResidualBlock, self).__init__()
@@ -113,24 +130,18 @@ class DeeperCNN(nn.Module):
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(32)
         
-        # Use MaxPool instead of strided conv for the first downsampling
-        # MaxPool is better at preserving sparse features (white lines on black)
         self.layer1 = self._make_layer(32, 64, stride=2) 
         self.layer2 = self._make_layer(64, 128, stride=2)
         self.layer3 = self._make_layer(128, 256, stride=2)
         
-        self.avg_pool = nn.AdaptiveMaxPool2d((1, 1)) # Changed to MaxPool
+        self.avg_pool = nn.AdaptiveMaxPool2d((1, 1)) 
         
-        # Embedder
         self.embedder = nn.Sequential(
             nn.Linear(256, 256),
             nn.BatchNorm1d(256),
             nn.LeakyReLU(0.1),
-            # No Dropout here (keep features deterministic)
         )
         
-        # Classifier Head
-        # Inputs: Emb1 (256) + Emb2 (256) + Diff (256) = 768
         self.classifier = nn.Sequential(
             nn.Linear(256 * 3, 128),
             nn.LeakyReLU(0.1),
@@ -152,15 +163,12 @@ class DeeperCNN(nn.Module):
         x = self.avg_pool(x)
         x = x.view(x.size(0), -1)
         x = self.embedder(x)
-        # We normalize to prevent one vector exploding in magnitude
         return F.normalize(x, p=2, dim=1)
 
     def forward(self, img1, img2):
         emb1 = self.forward_one(img1)
         emb2 = self.forward_one(img2)
         
-        # Robust Fusion: Concatenate features
-        # This tells the classifier: "Here is A, Here is B, Here is how they differ"
         diff = torch.abs(emb1 - emb2)
         combined = torch.cat((emb1, emb2, diff), dim=1)
         
