@@ -13,11 +13,12 @@ class FingerprintTextureDataset(Dataset):
         self.img_size = 64 
         self.augment = augment
 
-        # UPDATED: Gentler augmentation to preserve thin ridges
         if self.augment:
             self.transform = transforms.Compose([
-                transforms.RandomRotation(degrees=10), # Reduced from 20 to 10
-                transforms.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.95, 1.05)), # Reduced scale range
+                # Gentle rotation
+                transforms.RandomRotation(degrees=10),
+                # Very slight translation/scale to simulate finger placement diffs
+                transforms.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.95, 1.05)),
             ])
         else:
             self.transform = None
@@ -26,7 +27,6 @@ class FingerprintTextureDataset(Dataset):
         return len(self.pairs)
         
     def preprocess_image(self, img_data, orientation_map):
-        # SAFETY CHECK: Handle empty or broken skeletons
         if img_data is None or img_data.size == 0:
             return np.zeros((self.img_size, self.img_size), dtype=np.float32)
 
@@ -40,11 +40,9 @@ class FingerprintTextureDataset(Dataset):
         padded = np.pad(img_data, ((half, half), (half, half)), mode='constant')
         cy += half
         cx += half
-        
-        # Crop around core
         patch = padded[cy-half:cy+half, cx-half:cx+half]
         
-        # Thicken ridges (Dilation)
+        # Thicken ridges slightly
         kernel = np.ones((3,3), np.uint8)
         patch_uint8 = patch.astype(np.uint8)
         patch_thick = cv2.dilate(patch_uint8, kernel, iterations=1)
@@ -54,8 +52,6 @@ class FingerprintTextureDataset(Dataset):
 
     def __getitem__(self, idx):
         g1, g2, label = self.pairs[idx]
-        
-        # Preprocess
         p1 = self.preprocess_image(g1.skeleton, g1.orientation_map)
         p2 = self.preprocess_image(g2.skeleton, g2.orientation_map)
         
@@ -75,7 +71,7 @@ class ResidualBlock(nn.Module):
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_channels)
-
+        
         self.shortcut = nn.Sequential()
         if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
@@ -102,21 +98,19 @@ class DeeperCNN(nn.Module):
         
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         
-        # UPDATED: Feature Embedder with higher Dropout
         self.embedder = nn.Sequential(
             nn.Linear(256, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(0.5) # Increased dropout to 0.5
+            nn.Dropout(0.5) 
         )
         
-        # UPDATED: Classifier Head (Binary Classification)
-        # Learns to map the difference vector to a probability
+        # Classifier now takes Normalized inputs, so values are small
         self.classifier = nn.Sequential(
             nn.Linear(256, 64),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(64, 1) # Output Logit
+            nn.Linear(64, 1)
         )
 
     def _make_layer(self, in_dim, out_dim, stride):
@@ -133,21 +127,21 @@ class DeeperCNN(nn.Module):
         x = self.avg_pool(x)
         x = x.view(x.size(0), -1)
         x = self.embedder(x)
+        # --- RE-ADDED NORMALIZATION ---
+        # This is critical for stable distance learning
+        x = F.normalize(x, p=2, dim=1)
         return x
 
     def forward(self, img1, img2):
         emb1 = self.forward_one(img1)
         emb2 = self.forward_one(img2)
         
-        # Calculate absolute difference features
         diff = torch.abs(emb1 - emb2)
-        
-        # Classify the difference
         logits = self.classifier(diff)
         return logits.squeeze()
 
 class EarlyStopping:
-    def __init__(self, patience=7, delta=0.001, path='best_cnn.pth'):
+    def __init__(self, patience=10, delta=0.001, path='best_cnn.pth'):
         self.patience = patience
         self.delta = delta
         self.path = path
