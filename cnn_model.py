@@ -6,7 +6,6 @@ import cv2
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-# ... (Keep FingerprintTextureDataset exactly the same as before) ...
 class FingerprintTextureDataset(Dataset):
     def __init__(self, pairs, core_finder_func, augment=False):
         self.pairs = pairs
@@ -18,6 +17,8 @@ class FingerprintTextureDataset(Dataset):
             self.transform = transforms.Compose([
                 transforms.RandomRotation(degrees=20),
                 transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+                # Added perspective to make it robust against pressure distortion
+                transforms.RandomPerspective(distortion_scale=0.2, p=0.5) 
             ])
         else:
             self.transform = None
@@ -26,6 +27,10 @@ class FingerprintTextureDataset(Dataset):
         return len(self.pairs)
         
     def preprocess_image(self, img_data, orientation_map):
+        # Safety check: if skeleton is empty/None, return black image
+        if img_data is None or img_data.size == 0:
+            return np.zeros((self.img_size, self.img_size), dtype=np.float32)
+
         core = self.core_finder(orientation_map, block_size=16) 
         if core is None:
             cy, cx = img_data.shape[0]//2, img_data.shape[1]//2
@@ -82,6 +87,7 @@ class ResidualBlock(nn.Module):
 class DeeperCNN(nn.Module):
     def __init__(self):
         super(DeeperCNN, self).__init__()
+        # Input 1 channel (grayscale/binary skeleton)
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(32)
         
@@ -91,12 +97,20 @@ class DeeperCNN(nn.Module):
         
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         
-        self.fc = nn.Sequential(
+        # Feature Embedder
+        self.embedder = nn.Sequential(
             nn.Linear(256, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(0.3), # Reduced dropout slightly
-            nn.Linear(256, 128) 
+            nn.Dropout(0.3)
+        )
+        
+        # --- NEW: Binary Classifier Head ---
+        # Takes the absolute difference of two embeddings and decides if they match
+        self.classifier = nn.Sequential(
+            nn.Linear(256, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1) # Output logit
         )
 
     def _make_layer(self, in_dim, out_dim, stride):
@@ -112,33 +126,25 @@ class DeeperCNN(nn.Module):
         x = self.layer3(x)
         x = self.avg_pool(x)
         x = x.view(x.size(0), -1)
-        x = self.fc(x)
-        
-        # --- NEW: L2 NORMALIZATION ---
-        # Forces embeddings to lie on a hypersphere. 
-        # Prevents "All Zeros" collapse.
-        x = F.normalize(x, p=2, dim=1) 
+        x = self.embedder(x)
+        # Note: We removed F.normalize here to let the classifier learn magnitude
         return x
 
     def forward(self, img1, img2):
         emb1 = self.forward_one(img1)
         emb2 = self.forward_one(img2)
-        dist = F.pairwise_distance(emb1, emb2)
-        return dist
+        
+        # Calculate absolute difference between features
+        diff = torch.abs(emb1 - emb2)
+        
+        # Classify based on the difference
+        logits = self.classifier(diff)
+        return logits.squeeze()
 
-# ... (ContrastiveLoss and EarlyStopping remain same) ...
-class ContrastiveLoss(torch.nn.Module):
-    def __init__(self, margin=1.0): # Reduced margin because vectors are normalized now!
-        super(ContrastiveLoss, self).__init__()
-        self.margin = margin
-
-    def forward(self, euclidean_distance, label):
-        loss_contrastive = torch.mean((label) * torch.pow(euclidean_distance, 2) +
-                                      (1-label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))
-        return loss_contrastive
+# Remove ContrastiveLoss class (we will use BCEWithLogitsLoss)
 
 class EarlyStopping:
-    def __init__(self, patience=5, delta=0, path='best_cnn.pth'):
+    def __init__(self, patience=7, delta=0.001, path='best_cnn.pth'):
         self.patience = patience
         self.delta = delta
         self.path = path
