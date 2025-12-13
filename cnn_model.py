@@ -10,7 +10,7 @@ class FingerprintTextureDataset(Dataset):
     def __init__(self, pairs, core_finder_func, augment=False):
         self.pairs = pairs
         self.core_finder = core_finder_func 
-        self.img_size = 64 
+        self.img_size = 96 
         self.augment = augment
 
         # UPDATED: Stronger Augmentation to fight overfitting

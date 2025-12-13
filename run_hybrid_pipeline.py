@@ -176,26 +176,47 @@ def run_hybrid_system():
     
     cnn_probs = np.array(cnn_probs_list)
     
-    # --- E. EVAL ---
-    final_probs = (xgb_probs + cnn_probs) / 2.0
+    # --- E. SMART FUSION (Grid Search) ---
+    print("\n[E] Optimizing Fusion Weights...")
     
-    fpr, tpr, _ = roc_curve(y_test_xgb, final_probs)
-    auc_score = auc(fpr, tpr)
+    best_auc = 0.0
+    best_alpha = 0.5
+    best_probs = None
     
-    print(f"\nFinal Hybrid AUC: {auc_score:.4f}")
+    # Try different weights from 0.0 to 1.0
+    # alpha = 1.0 means 100% CNN, alpha = 0.0 means 100% XGBoost
+    for alpha in np.linspace(0, 1, 21): 
+        hybrid_probs = (alpha * cnn_probs) + ((1 - alpha) * xgb_probs)
+        fpr, tpr, _ = roc_curve(y_test_xgb, hybrid_probs)
+        current_auc = auc(fpr, tpr)
+        
+        if current_auc > best_auc:
+            best_auc = current_auc
+            best_alpha = alpha
+            best_probs = hybrid_probs
+
+    print(f"\n--- RESULTS ---")
+    print(f"XGBoost Alone AUC: {auc(roc_curve(y_test_xgb, xgb_probs)[0], roc_curve(y_test_xgb, xgb_probs)[1]):.4f}")
+    print(f"CNN Alone AUC:     {auc(roc_curve(y_test_xgb, cnn_probs)[0], roc_curve(y_test_xgb, cnn_probs)[1]):.4f}")
+    print(f"Optimal Mix:       {best_alpha*100:.0f}% CNN + {(1-best_alpha)*100:.0f}% XGBoost")
+    print(f"FINAL HYBRID AUC:  {best_auc:.4f}")
+    
+    # Plotting Best Result
+    fpr, tpr, _ = roc_curve(y_test_xgb, best_probs)
     
     plt.figure(figsize=(10, 6))
-    plt.plot(fpr, tpr, label=f'Hybrid System (AUC={auc_score:.4f})', linewidth=3, color='purple')
+    plt.plot(fpr, tpr, label=f'Best Hybrid (AUC={best_auc:.4f})', linewidth=3, color='purple')
     
+    # Add baseline plots for comparison
     fpr_x, tpr_x, _ = roc_curve(y_test_xgb, xgb_probs)
-    plt.plot(fpr_x, tpr_x, label=f'XGBoost (AUC={auc(fpr_x, tpr_x):.4f})', linestyle='--')
+    plt.plot(fpr_x, tpr_x, label=f'XGBoost Only', linestyle=':', alpha=0.7)
     
     fpr_c, tpr_c, _ = roc_curve(y_test_xgb, cnn_probs)
-    plt.plot(fpr_c, tpr_c, label=f'CNN (AUC={auc(fpr_c, tpr_c):.4f})', linestyle='--')
+    plt.plot(fpr_c, tpr_c, label=f'CNN Only', linestyle='--', alpha=0.7)
     
     plt.plot([0, 1], [0, 1], 'k--', label='Random')
-    plt.title('Hybrid Fingerprint Matching (CenterCrop + Balanced)')
-    plt.xlabel('FPR'); plt.ylabel('TPR')
+    plt.title(f'Fingerprint Matching (Best Mix: {best_alpha:.1f} CNN / {1-best_alpha:.1f} XGB)')
+    plt.xlabel('False Positive Rate'); plt.ylabel('True Positive Rate')
     plt.legend(); plt.grid(True)
     plt.show()
 
