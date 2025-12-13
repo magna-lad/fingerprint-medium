@@ -27,7 +27,7 @@ def run_hybrid_system():
     
     # --- A. LOADING ---
     print("\n[A] Loading Data...")
-    users = load_users_dictionary('processed_data.pkl', True)
+    users = load_users_dictionary('/kaggle/input/processed-data/processed_data.pkl', True)
     analyzer = GraphMinutiae(users)
     analyzer.graph_maker()
     
