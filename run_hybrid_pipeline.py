@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from graph_minutiae import GraphMinutiae
 from load_save import load_users_dictionary
 from xgboost_feature_extractor import create_feature_vector_for_pair
-from cnn_model import DeeperCNN, FingerprintTextureDataset, EarlyStopping 
+from cnn_model import DeeperCNN, FingerprintTextureDataset, EarlyStopping
 
 def prepare_xgb_data(pairs, is_training=False):
     X, y = [], []
@@ -31,9 +31,10 @@ def run_hybrid_system():
     analyzer = GraphMinutiae(users)
     analyzer.graph_maker()
     
-    # Create pairs
+    # Create pairs (1 Genuine : 3 Impostors)
     all_pairs = analyzer.create_graph_pairs(num_impostors_per_genuine=3)
     train_users, val_users, test_users = analyzer.get_user_splits()
+    
     train_pairs, val_pairs, test_pairs = analyzer.split_pairs_by_user(all_pairs, train_users, val_users, test_users)
 
     # --- B. XGBOOST ---
@@ -45,6 +46,7 @@ def run_hybrid_system():
     X_train_xgb = scaler.fit_transform(X_train_xgb)
     X_test_xgb = scaler.transform(X_test_xgb)
     
+    # Train XGBoost
     xgb_model = xgb.XGBClassifier(
         n_estimators=300, max_depth=4, learning_rate=0.05, 
         n_jobs=-1, use_label_encoder=False, eval_metric='logloss'
@@ -57,6 +59,7 @@ def run_hybrid_system():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
+    # Loaders
     train_dataset = FingerprintTextureDataset(train_pairs, GraphMinutiae.find_true_core, augment=True)
     train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
     
@@ -65,13 +68,21 @@ def run_hybrid_system():
     
     cnn = DeeperCNN().to(device)
     
-    # --- CHANGED: Use BCEWithLogitsLoss ---
-    criterion = torch.nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.AdamW(cnn.parameters(), lr=0.0005, weight_decay=1e-4)
+    # --- CRITICAL FIX 1: Class Weighting ---
+    # We have ~3x more negatives than positives. We weight positives higher.
+    pos_weight = torch.tensor([3.0]).to(device)
+    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=3, factor=0.5, verbose=True)
+    # --- CRITICAL FIX 2: Lower LR & Weight Decay ---
+    # LR reduced to 1e-4. Weight decay added to prevent overfitting.
+    optimizer = torch.optim.AdamW(cnn.parameters(), lr=0.0001, weight_decay=1e-3)
+    
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', patience=3, factor=0.5, verbose=True
+    )
     stopper = EarlyStopping(patience=8, path='best_cnn.pth')
     
+    # Training Loop
     cnn.train()
     epochs = 50
     
@@ -86,43 +97,56 @@ def run_hybrid_system():
             img1, img2, label = img1.to(device), img2.to(device), label.to(device)
             
             optimizer.zero_grad()
-            logits = cnn(img1, img2) # Returns logits (unscaled scores)
+            logits = cnn(img1, img2) # Model outputs Logits
             loss = criterion(logits, label)
             loss.backward()
             optimizer.step()
             
             train_loss += loss.item()
             
-            # Calculate rough accuracy for monitoring
+            # Accuracy Metric
             probs = torch.sigmoid(logits)
             preds = (probs > 0.5).float()
             correct += (preds == label).sum().item()
             total += label.size(0)
         
-        avg_train = train_loss / len(train_loader)
+        avg_train_loss = train_loss / len(train_loader)
         train_acc = correct / total
         
         # --- VALIDATION STEP ---
         cnn.eval()
         val_loss = 0
+        val_correct = 0
+        val_total = 0
+        
         with torch.no_grad():
             for img1, img2, label in val_loader:
                 img1, img2, label = img1.to(device), img2.to(device), label.to(device)
                 logits = cnn(img1, img2)
                 loss = criterion(logits, label)
                 val_loss += loss.item()
+                
+                probs = torch.sigmoid(logits)
+                preds = (probs > 0.5).float()
+                val_correct += (preds == label).sum().item()
+                val_total += label.size(0)
         
-        avg_val = val_loss / len(val_loader)
+        avg_val_loss = val_loss / len(val_loader)
+        val_acc = val_correct / val_total
         
-        scheduler.step(avg_val)
+        scheduler.step(avg_val_loss)
         
-        print(f"   Train Loss: {avg_train:.4f} (Acc: {train_acc:.2%}) | Val Loss: {avg_val:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
+        print(f"   Train Loss: {avg_train_loss:.4f} (Acc: {train_acc:.2%}) | "
+              f"Val Loss: {avg_val_loss:.4f} (Acc: {val_acc:.2%}) | "
+              f"LR: {optimizer.param_groups[0]['lr']:.6f}")
         
-        stopper(avg_val, cnn)
+        stopper(avg_val_loss, cnn)
+        
         if stopper.early_stop:
-            print("Early stopping triggered!")
+            print("Early stopping triggered! Loading best model...")
             break
             
+    # Load best weights
     cnn.load_state_dict(torch.load('best_cnn.pth'))
 
     # --- D. FUSION ---
@@ -137,14 +161,14 @@ def run_hybrid_system():
         for img1, img2, label in tqdm(test_loader, desc="CNN Inference"):
             img1, img2 = img1.to(device), img2.to(device)
             logits = cnn(img1, img2)
-            # Apply Sigmoid to get probability [0, 1]
+            # Sigmoid to get probabilities [0, 1]
             probs = torch.sigmoid(logits)
             cnn_probs_list.extend(probs.cpu().numpy())
     
     cnn_probs = np.array(cnn_probs_list)
     
     # --- E. EVAL ---
-    # Since both XGBoost and CNN now output Prob(Genuine), simple averaging works best
+    # Average Fusion
     final_probs = (xgb_probs + cnn_probs) / 2.0
     
     fpr, tpr, _ = roc_curve(y_test_xgb, final_probs)
@@ -162,7 +186,7 @@ def run_hybrid_system():
     plt.plot(fpr_c, tpr_c, label=f'CNN (AUC={auc(fpr_c, tpr_c):.4f})', linestyle='--')
     
     plt.plot([0, 1], [0, 1], 'k--', label='Random')
-    plt.title(f'Hybrid Fingerprint Matching')
+    plt.title('Hybrid Fingerprint Matching')
     plt.xlabel('FPR'); plt.ylabel('TPR')
     plt.legend(); plt.grid(True)
     plt.show()

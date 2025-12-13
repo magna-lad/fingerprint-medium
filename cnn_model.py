@@ -13,12 +13,11 @@ class FingerprintTextureDataset(Dataset):
         self.img_size = 64 
         self.augment = augment
 
+        # UPDATED: Gentler augmentation to preserve thin ridges
         if self.augment:
             self.transform = transforms.Compose([
-                transforms.RandomRotation(degrees=20),
-                transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
-                # Added perspective to make it robust against pressure distortion
-                transforms.RandomPerspective(distortion_scale=0.2, p=0.5) 
+                transforms.RandomRotation(degrees=10), # Reduced from 20 to 10
+                transforms.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.95, 1.05)), # Reduced scale range
             ])
         else:
             self.transform = None
@@ -27,7 +26,7 @@ class FingerprintTextureDataset(Dataset):
         return len(self.pairs)
         
     def preprocess_image(self, img_data, orientation_map):
-        # Safety check: if skeleton is empty/None, return black image
+        # SAFETY CHECK: Handle empty or broken skeletons
         if img_data is None or img_data.size == 0:
             return np.zeros((self.img_size, self.img_size), dtype=np.float32)
 
@@ -41,9 +40,11 @@ class FingerprintTextureDataset(Dataset):
         padded = np.pad(img_data, ((half, half), (half, half)), mode='constant')
         cy += half
         cx += half
+        
+        # Crop around core
         patch = padded[cy-half:cy+half, cx-half:cx+half]
         
-        # Thicken
+        # Thicken ridges (Dilation)
         kernel = np.ones((3,3), np.uint8)
         patch_uint8 = patch.astype(np.uint8)
         patch_thick = cv2.dilate(patch_uint8, kernel, iterations=1)
@@ -53,8 +54,13 @@ class FingerprintTextureDataset(Dataset):
 
     def __getitem__(self, idx):
         g1, g2, label = self.pairs[idx]
-        img1 = torch.from_numpy(self.preprocess_image(g1.skeleton, g1.orientation_map)).unsqueeze(0)
-        img2 = torch.from_numpy(self.preprocess_image(g2.skeleton, g2.orientation_map)).unsqueeze(0)
+        
+        # Preprocess
+        p1 = self.preprocess_image(g1.skeleton, g1.orientation_map)
+        p2 = self.preprocess_image(g2.skeleton, g2.orientation_map)
+        
+        img1 = torch.from_numpy(p1).unsqueeze(0)
+        img2 = torch.from_numpy(p2).unsqueeze(0)
         
         if self.transform:
             img1 = self.transform(img1)
@@ -87,7 +93,6 @@ class ResidualBlock(nn.Module):
 class DeeperCNN(nn.Module):
     def __init__(self):
         super(DeeperCNN, self).__init__()
-        # Input 1 channel (grayscale/binary skeleton)
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(32)
         
@@ -97,20 +102,21 @@ class DeeperCNN(nn.Module):
         
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         
-        # Feature Embedder
+        # UPDATED: Feature Embedder with higher Dropout
         self.embedder = nn.Sequential(
             nn.Linear(256, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(0.3)
+            nn.Dropout(0.5) # Increased dropout to 0.5
         )
         
-        # --- NEW: Binary Classifier Head ---
-        # Takes the absolute difference of two embeddings and decides if they match
+        # UPDATED: Classifier Head (Binary Classification)
+        # Learns to map the difference vector to a probability
         self.classifier = nn.Sequential(
             nn.Linear(256, 64),
             nn.ReLU(),
-            nn.Linear(64, 1) # Output logit
+            nn.Dropout(0.5),
+            nn.Linear(64, 1) # Output Logit
         )
 
     def _make_layer(self, in_dim, out_dim, stride):
@@ -127,21 +133,18 @@ class DeeperCNN(nn.Module):
         x = self.avg_pool(x)
         x = x.view(x.size(0), -1)
         x = self.embedder(x)
-        # Note: We removed F.normalize here to let the classifier learn magnitude
         return x
 
     def forward(self, img1, img2):
         emb1 = self.forward_one(img1)
         emb2 = self.forward_one(img2)
         
-        # Calculate absolute difference between features
+        # Calculate absolute difference features
         diff = torch.abs(emb1 - emb2)
         
-        # Classify based on the difference
+        # Classify the difference
         logits = self.classifier(diff)
         return logits.squeeze()
-
-# Remove ContrastiveLoss class (we will use BCEWithLogitsLoss)
 
 class EarlyStopping:
     def __init__(self, patience=7, delta=0.001, path='best_cnn.pth'):
