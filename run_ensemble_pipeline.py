@@ -136,7 +136,7 @@ def run_ensemble_pipeline():
     print("="*60); print(f" ENSEMBLE PIPELINE (Models={NUM_ENSEMBLE_MODELS} | TTA={USE_TTA}) "); print("="*60)
     
     # [1] LOAD DATA
-    users = load_users_dictionary('processed_data.pkl', True)
+    users = load_users_dictionary('/kaggle/input/processed-data/processed_data.pkl', True)
     analyzer = GraphMinutiae(users)
     analyzer.graph_maker()
     
