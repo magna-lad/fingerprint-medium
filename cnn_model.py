@@ -10,19 +10,19 @@ class FingerprintTextureDataset(Dataset):
     def __init__(self, pairs, core_finder_func, augment=False):
         self.pairs = pairs
         self.core_finder = core_finder_func 
+        # Resolution must be 96 for the STN calculations below
         self.img_size = 96 
         self.augment = augment
 
-        # UPDATED: Stronger Augmentation to fight overfitting
         if self.augment:
             self.transform = transforms.Compose([
-                transforms.ToPILImage(), # Ensure PIL format for transforms
-                transforms.RandomRotation(degrees=30), # Increased from 10 -> 30
+                transforms.ToPILImage(),
+                transforms.RandomRotation(degrees=30),
                 transforms.RandomAffine(
                     degrees=0, 
-                    translate=(0.1, 0.1), # Increased translation
-                    scale=(0.9, 1.1),     # Added scaling (pressure variance)
-                    shear=10              # Added shear (distortion)
+                    translate=(0.1, 0.1), 
+                    scale=(0.9, 1.1),
+                    shear=10
                 ),
                 transforms.ToTensor()
             ])
@@ -33,21 +33,19 @@ class FingerprintTextureDataset(Dataset):
         return len(self.pairs)
         
     def preprocess_image(self, img_data, orientation_map):
-        # 1. Sanity Check
         if img_data is None or img_data.size == 0:
             return np.zeros((self.img_size, self.img_size), dtype=np.float32)
 
         img_data = img_data.astype(np.float32)
         
-        # 2. Inversion Fix (Ensure Black Background)
+        # Inversion Fix
         if np.mean(img_data) > 100:
             img_data = 255.0 - img_data 
             
-        # Clean Noise
         img_data[img_data > 127] = 255.0
         img_data[img_data <= 127] = 0.0
 
-        # 3. Intelligent Cropping
+        # Center of Mass Alignment
         try:
             img_u8 = img_data.astype(np.uint8)
             M = cv2.moments(img_u8)
@@ -63,15 +61,14 @@ class FingerprintTextureDataset(Dataset):
         except:
             cy, cx = img_data.shape[0]//2, img_data.shape[1]//2
             
-        # 4. Padding & Cropping
+        # Padding & Cropping
         half = self.img_size // 2
         padded = np.pad(img_data, ((half, half), (half, half)), mode='constant', constant_values=0)
-        
         cy += half
         cx += half
         patch = padded[cy-half:cy+half, cx-half:cx+half]
         
-        # 5. Dilation
+        # Dilation
         kernel = np.ones((3,3), np.uint8)
         patch_uint8 = patch.astype(np.uint8)
         patch_thick = cv2.dilate(patch_uint8, kernel, iterations=1)
@@ -84,10 +81,7 @@ class FingerprintTextureDataset(Dataset):
         p1 = self.preprocess_image(g1.skeleton, g1.orientation_map)
         p2 = self.preprocess_image(g2.skeleton, g2.orientation_map)
         
-        # Keep dimensions consistent for transforms
-        # (Height, Width) -> (1, Height, Width) implicitly handled by ToTensor or manual
         if self.augment:
-             # Pass as uint8 (0-255) for PIL transforms, then ToTensor converts back to float (0-1)
              p1_u8 = (p1 * 255).astype(np.uint8)
              p2_u8 = (p2 * 255).astype(np.uint8)
              img1 = self.transform(p1_u8)
@@ -97,6 +91,42 @@ class FingerprintTextureDataset(Dataset):
              img2 = torch.from_numpy(p2).unsqueeze(0)
         
         return img1, img2, torch.tensor(label, dtype=torch.float32)
+
+# --- NEW STN MODULE ---
+class STN_Module(nn.Module):
+    def __init__(self):
+        super(STN_Module, self).__init__()
+        # Localization net
+        self.localization = nn.Sequential(
+            nn.Conv2d(1, 8, kernel_size=7),    # 96 -> 90
+            nn.MaxPool2d(2, stride=2),         # 90 -> 45
+            nn.ReLU(True),
+            nn.Conv2d(8, 10, kernel_size=5),   # 45 -> 41
+            nn.MaxPool2d(2, stride=2),         # 41 -> 20
+            nn.ReLU(True)
+        )
+        
+        # Regressor for the 3 * 2 affine matrix
+        # Input size calculation: 10 channels * 20 height * 20 width = 4000
+        self.fc_loc = nn.Sequential(
+            nn.Linear(10 * 20 * 20, 32), # CORRECTED SIZE FOR 96x96 IMAGES
+            nn.ReLU(True),
+            nn.Linear(32, 3 * 2)
+        )
+        
+        # Initialize the weights/bias with identity transformation
+        self.fc_loc[2].weight.data.zero_()
+        self.fc_loc[2].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
+
+    def forward(self, x):
+        xs = self.localization(x)
+        xs = xs.view(-1, 10 * 20 * 20) # Flatten
+        theta = self.fc_loc(xs)
+        theta = theta.view(-1, 2, 3)
+        
+        grid = F.affine_grid(theta, x.size(), align_corners=True)
+        x = F.grid_sample(x, grid, align_corners=True)
+        return x
 
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1):
@@ -123,26 +153,26 @@ class ResidualBlock(nn.Module):
 class DeeperCNN(nn.Module):
     def __init__(self):
         super(DeeperCNN, self).__init__()
-        # Initial Convolution
+        
+        # --- INTEGRATE STN HERE ---
+        self.stn = STN_Module()
+        
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(32)
         
-        # Residual Layers
         self.layer1 = self._make_layer(32, 64, stride=2) 
         self.layer2 = self._make_layer(64, 128, stride=2)
         self.layer3 = self._make_layer(128, 256, stride=2)
         
         self.avg_pool = nn.AdaptiveMaxPool2d((1, 1)) 
         
-        # UPDATED: Embedder now has Dropout
         self.embedder = nn.Sequential(
             nn.Linear(256, 256),
             nn.BatchNorm1d(256),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.3) # Added dropout to feature vector
+            nn.Dropout(0.3) 
         )
         
-        # Classifier
         self.classifier = nn.Sequential(
             nn.Linear(256 * 3, 128),
             nn.LeakyReLU(0.1), 
@@ -157,6 +187,9 @@ class DeeperCNN(nn.Module):
         )
 
     def forward_one(self, x):
+        # --- APPLY STN BEFORE CNN ---
+        x = self.stn(x)
+        
         x = F.leaky_relu(self.bn1(self.conv1(x)), 0.1)
         x = self.layer1(x)
         x = self.layer2(x)
@@ -170,7 +203,6 @@ class DeeperCNN(nn.Module):
         emb1 = self.forward_one(img1)
         emb2 = self.forward_one(img2)
         
-        # Fusion
         diff = torch.abs(emb1 - emb2)
         combined = torch.cat((emb1, emb2, diff), dim=1)
         
@@ -179,7 +211,7 @@ class DeeperCNN(nn.Module):
 
 class EarlyStopping:
     def __init__(self, patience=12, delta=0.001, path='best_cnn.pth'):
-        self.patience = patience # Increased patience slightly due to higher dropout
+        self.patience = patience 
         self.delta = delta
         self.path = path
         self.counter = 0
