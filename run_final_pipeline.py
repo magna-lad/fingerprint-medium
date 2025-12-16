@@ -19,7 +19,7 @@ from cnn_model import DeeperCNN, FingerprintTextureDataset, EarlyStopping
 BATCH_SIZE = 64
 EPOCHS = 40
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-DATA_FILE = 'processed_data.pkl' # Output from main.py
+DATA_FILE = '/kaggle/input/processed-data/processed_data.pkl' # Output from main.py
 
 def prepare_xgb_features(pairs, desc):
     """Extracts geometric graph features for XGBoost."""
