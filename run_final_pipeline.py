@@ -174,7 +174,7 @@ def run_final_pipeline():
     print("="*60); print(" FINAL NUCLEAR PIPELINE (>95% GOAL) "); print("="*60)
     
     # 1. Load Data
-    users = load_users_dictionary('processed_data.pkl', True)
+    users = load_users_dictionary('/kaggle/input/processed-data/processed_data.pkl', True)
     analyzer = GraphMinutiae(users)
     analyzer.graph_maker()
     all_pairs = analyzer.create_graph_pairs(num_impostors_per_genuine=3)
