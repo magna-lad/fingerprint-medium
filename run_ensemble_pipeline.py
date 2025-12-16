@@ -3,6 +3,7 @@ import xgboost as xgb
 import torch
 import joblib
 import matplotlib.pyplot as plt
+import os
 from tqdm import tqdm
 from sklearn.metrics import roc_curve, auc
 from sklearn.preprocessing import StandardScaler
@@ -18,8 +19,8 @@ from cnn_model import DeeperCNN, FingerprintTextureDataset, EarlyStopping
 # ==========================================
 # CONFIGURATION
 # ==========================================
-NUM_ENSEMBLE_MODELS = 3   # Trains 3 distinct models
-USE_TTA = True            # Enables Test Time Augmentation
+NUM_ENSEMBLE_MODELS = 3   
+USE_TTA = True            
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # ==========================================
 
@@ -31,14 +32,22 @@ def prepare_xgb_data(pairs, is_training=False):
     return np.array(X), np.array(y)
 
 def train_single_cnn(model_idx, train_loader, val_loader):
-    """Trains a single instance of the CNN."""
-    print(f"\n--- Training CNN Model {model_idx+1}/{NUM_ENSEMBLE_MODELS} ---")
+    filename = f'best_cnn_v{model_idx}.pth'
     
+    # --- FAST RECOVERY: Load existing model if it exists ---
+    if os.path.exists(filename):
+        print(f"\n[FAST LOAD] Found {filename}, loading weights...")
+        model = DeeperCNN().to(DEVICE)
+        model.load_state_dict(torch.load(filename))
+        return model
+    # -------------------------------------------------------
+
+    print(f"\n--- Training CNN Model {model_idx+1}/{NUM_ENSEMBLE_MODELS} ---")
     model = DeeperCNN().to(DEVICE)
     criterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001, weight_decay=1e-3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=3, factor=0.5)
-    stopper = EarlyStopping(patience=8, path=f'best_cnn_v{model_idx}.pth')
+    stopper = EarlyStopping(patience=8, path=filename)
 
     epochs = 40 
     
@@ -82,19 +91,13 @@ def train_single_cnn(model_idx, train_loader, val_loader):
             break
             
     # Return best model
-    model.load_state_dict(torch.load(f'best_cnn_v{model_idx}.pth'))
+    model.load_state_dict(torch.load(filename))
     return model
 
 def predict_with_tta(models, test_loader):
-    """
-    Predicts using Ensemble + TTA (Original, Rot+10, Rot-10).
-    Averages 3 views per model * 3 models = 9 predictions per pair.
-    """
     print(f"\n--- Running Ensemble Inference with TTA (Size: {len(models)}) ---")
-    
     avg_probs = []
     
-    # Set all models to eval mode
     for m in models: m.eval()
 
     with torch.no_grad():
@@ -104,7 +107,6 @@ def predict_with_tta(models, test_loader):
             
             batch_probs = torch.zeros(img1.size(0)).to(DEVICE)
             
-            # For each model in the ensemble
             for model in models:
                 # 1. Original View
                 logits = model(img1, img2)
@@ -123,11 +125,8 @@ def predict_with_tta(models, test_loader):
                     logits_r2 = model(img1_r2, img2_r2)
                     batch_probs += torch.sigmoid(logits_r2)
             
-            # Average out
-            # (Num Models * 3 Views) if TTA is on, else (Num Models * 1 View)
             divisor = len(models) * (3 if USE_TTA else 1)
             batch_probs /= divisor
-            
             avg_probs.extend(batch_probs.cpu().numpy())
             
     return np.array(avg_probs)
@@ -136,7 +135,7 @@ def run_ensemble_pipeline():
     print("="*60); print(f" ENSEMBLE PIPELINE (Models={NUM_ENSEMBLE_MODELS} | TTA={USE_TTA}) "); print("="*60)
     
     # [1] LOAD DATA
-    users = load_users_dictionary('/kaggle/input/processed-data/processed_data.pkl', True)
+    users = load_users_dictionary('processed_data.pkl', True)
     analyzer = GraphMinutiae(users)
     analyzer.graph_maker()
     
@@ -162,7 +161,6 @@ def run_ensemble_pipeline():
     val_dataset = FingerprintTextureDataset(val_pairs, GraphMinutiae.find_true_core, augment=False)
     test_dataset = FingerprintTextureDataset(test_pairs, GraphMinutiae.find_true_core, augment=False)
     
-    # Weighted Sampler
     y_train_list = [label for _, _, label in train_pairs]
     class_counts = np.bincount(y_train_list)
     weights = 1. / class_counts
@@ -173,23 +171,21 @@ def run_ensemble_pipeline():
     val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
 
-    # [4] TRAIN ENSEMBLE
+    # [4] TRAIN OR LOAD ENSEMBLE
     trained_models = []
     for i in range(NUM_ENSEMBLE_MODELS):
-        # Determine unique seed for this model run
-        torch.manual_seed(42 + i)
         model = train_single_cnn(i, train_loader, val_loader)
         trained_models.append(model)
         
     # [5] ENSEMBLE PREDICTION
     cnn_ensemble_probs = predict_with_tta(trained_models, test_loader)
     
-    # [6] OPTIMAL FUSION
+    # [6] OPTIMAL FUSION & PLOTTING
     print("\n[B] Optimizing Fusion Weights...")
     best_auc = 0.0
     best_alpha = 0.5
     
-    for alpha in np.linspace(0, 1, 41): # Fine-grained search
+    for alpha in np.linspace(0, 1, 41):
         hybrid_probs = (alpha * cnn_ensemble_probs) + ((1 - alpha) * xgb_probs)
         fpr, tpr, _ = roc_curve(y_test_xgb, hybrid_probs)
         current_auc = auc(fpr, tpr)
@@ -198,23 +194,22 @@ def run_ensemble_pipeline():
             best_auc = current_auc
             best_alpha = alpha
             
-    print(f"\n" + "="*40)
-    print(f" FINAL RESULTS (Strategy 4)")
-    print(f"="*40)
-    print(f"XGBoost AUC:       {auc(roc_curve(y_test_xgb, xgb_probs)[0], roc_curve(y_test_xgb, xgb_probs)[1]):.4f}")
-    print(f"Ensemble CNN AUC:  {auc(roc_curve(y_test_xgb, cnn_ensemble_probs)[0], roc_curve(y_test_xgb, cnn_ensemble_probs)[1]):.4f}")
-    print(f"Hybrid AUC:        {best_auc:.4f}")
-    print(f"Best Mix:          {best_alpha:.2f} CNN + {1-best_alpha:.2f} XGB")
+    print(f"\nFINAL HYBRID AUC: {best_auc:.4f} (Mix: {best_alpha:.2f} CNN / {1-best_alpha:.2f} XGB)")
     
-    # Plot
+    # --- PLOT AND SAVE ---
     final_probs = (best_alpha * cnn_ensemble_probs) + ((1 - best_alpha) * xgb_probs)
     fpr, tpr, _ = roc_curve(y_test_xgb, final_probs)
+    
     plt.figure(figsize=(10, 8))
     plt.plot(fpr, tpr, label=f'Ensemble Hybrid (AUC={best_auc:.4f})', linewidth=3, color='darkgreen')
     plt.plot([0, 1], [0, 1], 'k--')
     plt.title(f'Final Ensemble Result (3x CNN + TTA)')
     plt.xlabel('FPR'); plt.ylabel('TPR'); plt.legend(); plt.grid(True)
-    plt.show()
+    
+    output_filename = 'ensemble_results.png'
+    plt.savefig(output_filename)
+    print(f"\nGraph saved to: {output_filename}")
+    print("Use 'display(Image(filename=...))' in a new cell to see it.")
 
 if __name__ == '__main__':
     run_ensemble_pipeline()
