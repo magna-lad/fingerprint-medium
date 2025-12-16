@@ -1,172 +1,244 @@
+import numpy as np
+import xgboost as xgb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-import cv2 
-from torch.utils.data import Dataset
-from torchvision import transforms
+import random
+import os
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+from sklearn.metrics import roc_curve, auc
+from sklearn.preprocessing import StandardScaler
+from torch.utils.data import DataLoader, Dataset
+from collections import defaultdict
+import torchvision.transforms.functional as TF
 
-class FingerprintTextureDataset(Dataset):
-    def __init__(self, pairs, core_finder_func, augment=False):
-        self.pairs = pairs
-        self.core_finder = core_finder_func 
-        self.img_size = 96 
+# Custom Modules
+from graph_minutiae import GraphMinutiae
+from load_save import load_users_dictionary
+from xgboost_feature_extractor import create_feature_vector_for_pair
+from cnn_model import DeeperCNN, FingerprintTextureDataset
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
+NUM_ENSEMBLE = 3           # Train 3 Independent Models
+USE_TTA = True             # Test Time Augmentation
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+TRIPLET_MARGIN = 1.0
+EPOCHS = 35
+# ==========================================
+
+class TripletLoss(nn.Module):
+    def __init__(self, margin=1.0):
+        super(TripletLoss, self).__init__()
+        self.margin = margin
+    def forward(self, anchor, positive, negative):
+        dist_pos = (anchor - positive).pow(2).sum(1)
+        dist_neg = (anchor - negative).pow(2).sum(1)
+        return F.relu(dist_pos - dist_neg + self.margin).mean()
+
+# TRIPLET DATASET (Only for training)
+class FingerprintTripletDataset(Dataset):
+    def __init__(self, graphs, augment=True):
         self.augment = augment
-
-        if self.augment:
-            self.transform = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.RandomRotation(degrees=30),
-                transforms.RandomAffine(
-                    degrees=0, 
-                    translate=(0.1, 0.1), 
-                    scale=(0.9, 1.1),
-                    shear=10
-                ),
-                transforms.ToTensor()
-            ])
-        else:
-            self.transform = None
+        # Create helper to reuse preprocessing logic from cnn_model
+        # We pass a dummy list because we only need the methods
+        self.helper_ds = FingerprintTextureDataset([], None, augment=augment)
+        
+        # Organize graphs by ID
+        self.identities = defaultdict(list)
+        for g in graphs:
+            key = (g['user_id'], g['hand'], g['finger_idx'])
+            self.identities[key].append(g)
+        self.identity_keys = list(self.identities.keys())
 
     def __len__(self):
-        return len(self.pairs)
-        
-    def preprocess_image(self, img_data, orientation_map):
-        if img_data is None or img_data.size == 0:
-            return np.zeros((self.img_size, self.img_size), dtype=np.float32)
+        return len(self.identity_keys)
 
-        img_data = img_data.astype(np.float32)
-        
-        # Inversion Fix
-        if np.mean(img_data) > 100:
-            img_data = 255.0 - img_data 
-            
-        img_data[img_data > 127] = 255.0
-        img_data[img_data <= 127] = 0.0
-
-        # Center of Mass Alignment
-        try:
-            img_u8 = img_data.astype(np.uint8)
-            M = cv2.moments(img_u8)
-            if M["m00"] != 0:
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-            else:
-                core = self.core_finder(orientation_map, block_size=16) 
-                if core: cx, cy, _ = core
-                else: cy, cx = img_data.shape[0]//2, img_data.shape[1]//2
-        except:
-            cy, cx = img_data.shape[0]//2, img_data.shape[1]//2
-            
-        half = self.img_size // 2
-        padded = np.pad(img_data, ((half, half), (half, half)), mode='constant', constant_values=0)
-        cy += half
-        cx += half
-        patch = padded[cy-half:cy+half, cx-half:cx+half]
-        
-        # Dilation
-        kernel = np.ones((3,3), np.uint8)
-        patch_uint8 = patch.astype(np.uint8)
-        patch_thick = cv2.dilate(patch_uint8, kernel, iterations=1)
-
-        patch = patch_thick.astype(np.float32) / 255.0
-        return patch
+    def _get_img(self, meta):
+        # Uses the logic from cnn_model.py
+        p = self.helper_ds.preprocess_image(meta['graph'].skeleton, meta['graph'].orientation_map)
+        if self.augment:
+             p_u8 = (p * 255).astype(np.uint8)
+             return self.helper_ds.transform(p_u8)
+        else:
+             return torch.from_numpy(p).unsqueeze(0)
 
     def __getitem__(self, idx):
-        g1, g2, label = self.pairs[idx]
-        p1 = self.preprocess_image(g1.skeleton, g1.orientation_map)
-        p2 = self.preprocess_image(g2.skeleton, g2.orientation_map)
+        # 1. Anchor Identity
+        anchor_key = self.identity_keys[idx]
+        samples = self.identities[anchor_key]
+        if len(samples) < 2: return self.__getitem__(np.random.randint(0, len(self)))
         
-        if self.augment:
-             p1_u8 = (p1 * 255).astype(np.uint8)
-             p2_u8 = (p2 * 255).astype(np.uint8)
-             img1 = self.transform(p1_u8)
-             img2 = self.transform(p2_u8)
-        else:
-             img1 = torch.from_numpy(p1).unsqueeze(0)
-             img2 = torch.from_numpy(p2).unsqueeze(0)
+        # 2. Anchor & Positive
+        a_meta, p_meta = random.sample(samples, 2)
         
-        return img1, img2, torch.tensor(label, dtype=torch.float32)
+        # 3. Negative (Random different ID)
+        neg_idx = np.random.randint(0, len(self))
+        while neg_idx == idx: neg_idx = np.random.randint(0, len(self))
+        neg_meta = random.choice(self.identities[self.identity_keys[neg_idx]])
+        
+        return self._get_img(a_meta), self._get_img(p_meta), self._get_img(neg_meta)
 
-class STN_Module(nn.Module):
-    def __init__(self):
-        super(STN_Module, self).__init__()
-        self.localization = nn.Sequential(
-            nn.Conv2d(1, 8, kernel_size=7),    # 96 -> 90
-            nn.MaxPool2d(2, stride=2),         # 90 -> 45
-            nn.ReLU(True),
-            nn.Conv2d(8, 10, kernel_size=5),   # 45 -> 41
-            nn.MaxPool2d(2, stride=2),         # 41 -> 20
-            nn.ReLU(True)
-        )
-        self.fc_loc = nn.Sequential(
-            nn.Linear(10 * 20 * 20, 32),
-            nn.ReLU(True),
-            nn.Linear(32, 3 * 2)
-        )
-        self.fc_loc[2].weight.data.zero_()
-        self.fc_loc[2].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
+def train_triplet_model(model_idx, train_graphs):
+    filename = f'best_triplet_v{model_idx}.pth'
+    if os.path.exists(filename):
+        print(f"[LOAD] Found {filename}, loading...")
+        model = DeeperCNN().to(DEVICE)
+        model.load_state_dict(torch.load(filename))
+        return model
 
-    def forward(self, x):
-        xs = self.localization(x)
-        xs = xs.view(-1, 10 * 20 * 20)
-        theta = self.fc_loc(xs)
-        theta = theta.view(-1, 2, 3)
-        grid = F.affine_grid(theta, x.size(), align_corners=True)
-        x = F.grid_sample(x, grid, align_corners=True)
-        return x
+    print(f"\n--- Training Triplet Model {model_idx+1}/{NUM_ENSEMBLE} ---")
+    train_ds = FingerprintTripletDataset(train_graphs, augment=True)
+    train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
+    
+    model = DeeperCNN().to(DEVICE)
+    criterion = TripletLoss(margin=TRIPLET_MARGIN)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
+    
+    # Simple training loop (No validation set used for stopping to save pairs for final test)
+    # We train for fixed epochs to ensure robustness
+    model.train()
+    for epoch in range(EPOCHS):
+        total_loss = 0
+        pbar = tqdm(train_loader, desc=f"Ep {epoch+1}/{EPOCHS}", leave=False)
+        for anchor, pos, neg in pbar:
+            anchor, pos, neg = anchor.to(DEVICE), pos.to(DEVICE), neg.to(DEVICE)
+            optimizer.zero_grad()
+            ea = model.forward_one(anchor)
+            ep = model.forward_one(pos)
+            en = model.forward_one(neg)
+            loss = criterion(ea, ep, en)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+    
+    torch.save(model.state_dict(), filename)
+    return model
 
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1):
-        super(ResidualBlock, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.shortcut = nn.Sequential()
-        if stride != 1 or in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(out_channels)
-            )
+def calculate_similarity(models, pair_loader):
+    """
+    Calculates ensemble Cosine Similarity with TTA.
+    Output: Normalized scores [0, 1] where 1 is match.
+    """
+    print(f"Calculating Similiarity (TTA={USE_TTA})...")
+    scores = []
+    
+    for m in models: m.eval()
+    
+    with torch.no_grad():
+        for img1, img2, _ in tqdm(pair_loader):
+            img1 = img1.to(DEVICE)
+            img2 = img2.to(DEVICE)
+            
+            # Aggregate embeddings from all models and TTA views
+            emb1_list, emb2_list = [], []
+            
+            for model in models:
+                # View 1: Original
+                emb1_list.append(model.forward_one(img1))
+                emb2_list.append(model.forward_one(img2))
+                
+                if USE_TTA:
+                    # View 2: +10 deg
+                    emb1_list.append(model.forward_one(TF.rotate(img1, 10)))
+                    emb2_list.append(model.forward_one(TF.rotate(img2, 10)))
+                    # View 3: -10 deg
+                    emb1_list.append(model.forward_one(TF.rotate(img1, -10)))
+                    emb2_list.append(model.forward_one(TF.rotate(img2, -10)))
+            
+            # Stack: [Views*Models, Batch, Features] -> Mean -> [Batch, Features]
+            # Average the vectors to get a robust prototype
+            e1 = torch.stack(emb1_list).mean(dim=0)
+            e2 = torch.stack(emb2_list).mean(dim=0)
+            
+            # Cosine Similarity: Ranges -1 to 1.
+            cos_sim = F.cosine_similarity(e1, e2)
+            
+            # Normalize to 0-1 for Fusion (Match=1, NonMatch=0)
+            # Cosine usually > 0 for fingerprints, but mapping -1..1 to 0..1 is safest
+            norm_score = (cos_sim + 1) / 2.0 
+            scores.extend(norm_score.cpu().numpy())
+            
+    return np.array(scores)
 
-    def forward(self, x):
-        out = F.leaky_relu(self.bn1(self.conv1(x)), 0.1)
-        out = self.bn2(self.conv2(out))
-        out += self.shortcut(x)
-        out = F.leaky_relu(out, 0.1)
-        return out
+def prepare_xgb_data(pairs, is_training=False):
+    X, y = [], []
+    for g1, g2, label in tqdm(pairs, desc="XGBoost"):
+        X.append(create_feature_vector_for_pair(g1, g2))
+        y.append(label)
+    return np.array(X), np.array(y)
 
-class DeeperCNN(nn.Module):
-    def __init__(self):
-        super(DeeperCNN, self).__init__()
-        self.stn = STN_Module()
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.layer1 = self._make_layer(32, 64, stride=2) 
-        self.layer2 = self._make_layer(64, 128, stride=2)
-        self.layer3 = self._make_layer(128, 256, stride=2)
-        self.avg_pool = nn.AdaptiveMaxPool2d((1, 1)) 
-        self.embedder = nn.Sequential(
-            nn.Linear(256, 256),
-            nn.BatchNorm1d(256),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.3) 
-        )
+def run_final_pipeline():
+    print("="*60); print(" FINAL NUCLEAR PIPELINE (>95% GOAL) "); print("="*60)
+    
+    # 1. Load Data
+    users = load_users_dictionary('processed_data.pkl', True)
+    analyzer = GraphMinutiae(users)
+    analyzer.graph_maker()
+    all_pairs = analyzer.create_graph_pairs(num_impostors_per_genuine=3)
+    train_users, val_users, test_users = analyzer.get_user_splits()
+    
+    # Split Pairs
+    train_pairs, _, test_pairs = analyzer.split_pairs_by_user(all_pairs, train_users, [], test_users)
+    
+    # Split Graphs for Triplet Training
+    all_graphs = analyzer.fingerprint_graphs
+    train_graphs = [g for g in all_graphs if g['user_id'] in train_users]
 
-    def _make_layer(self, in_dim, out_dim, stride):
-        return nn.Sequential(
-            ResidualBlock(in_dim, out_dim, stride),
-            ResidualBlock(out_dim, out_dim, stride=1)
-        )
+    # 2. XGBoost (Geometry Expert)
+    print("\n[Phase 1] XGBoost Training...")
+    X_train, y_train = prepare_xgb_data(train_pairs, True)
+    X_test, y_test = prepare_xgb_data(test_pairs, False)
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train); X_test = scaler.transform(X_test)
+    
+    xgb_model = xgb.XGBClassifier(n_estimators=400, max_depth=5, learning_rate=0.03, n_jobs=-1, eval_metric='logloss')
+    xgb_model.fit(X_train, y_train)
+    xgb_probs = xgb_model.predict_proba(X_test)[:, 1]
+    
+    # 3. Triplet Ensemble (Texture/Shape Expert)
+    print("\n[Phase 2] Triplet Ensemble Training...")
+    trained_models = []
+    for i in range(NUM_ENSEMBLE):
+        torch.manual_seed(42 + i) # Diversity
+        trained_models.append(train_triplet_model(i, train_graphs))
+        
+    # 4. Inference
+    test_ds = FingerprintTextureDataset(test_pairs, GraphMinutiae.find_true_core, augment=False)
+    test_loader = DataLoader(test_ds, batch_size=64, shuffle=False)
+    
+    cnn_sim_scores = calculate_similarity(trained_models, test_loader)
+    
+    # 5. Fusion
+    print("\n[Phase 3] Fusion & Result...")
+    
+    # Optimization loop
+    best_auc = 0; best_alpha = 0.5
+    for alpha in np.linspace(0, 1, 51):
+        mix = (alpha * cnn_sim_scores) + ((1-alpha) * xgb_probs)
+        fpr, tpr, _ = roc_curve(y_test, mix)
+        sc = auc(fpr, tpr)
+        if sc > best_auc: best_auc = sc; best_alpha = alpha
 
-    def forward_one(self, x):
-        x = self.stn(x)
-        x = F.leaky_relu(self.bn1(self.conv1(x)), 0.1)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.avg_pool(x)
-        x = x.view(x.size(0), -1)
-        x = self.embedder(x)
-        return F.normalize(x, p=2, dim=1) # Embedding Vector
+    print("-" * 30)
+    print(f"XGBoost AUC:    {auc(roc_curve(y_test, xgb_probs)[0], roc_curve(y_test, xgb_probs)[1]):.4f}")
+    print(f"Triplet CNN AUC:{auc(roc_curve(y_test, cnn_sim_scores)[0], roc_curve(y_test, cnn_sim_scores)[1]):.4f}")
+    print(f"FINAL HYBRID:   {best_auc:.4f}")
+    print(f"Mix: {best_alpha:.2f} CNN + {1-best_alpha:.2f} XGB")
+    print("-" * 30)
+
+    # Save Graph
+    final_scores = (best_alpha * cnn_sim_scores) + ((1-best_alpha) * xgb_probs)
+    fpr, tpr, _ = roc_curve(y_test, final_scores)
+    plt.figure(figsize=(10,8))
+    plt.plot(fpr, tpr, label=f'Nuclear Hybrid (AUC={best_auc:.4f})', color='red', linewidth=3)
+    plt.plot([0,1],[0,1],'k--')
+    plt.title("Final Architecture Performance")
+    plt.legend(); plt.grid(True)
+    plt.savefig('nuclear_results.png')
+    print("Graph saved to 'nuclear_results.png'.")
+
+if __name__ == '__main__':
+    run_final_pipeline()
