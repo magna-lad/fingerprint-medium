@@ -11,7 +11,7 @@ class FingerprintTextureDataset(Dataset):
         self.pairs = pairs
         self.core_finder = core_finder_func 
         # Resolution must be 96 for the STN calculations below
-        self.img_size = 96 
+        self.img_size = 96 # hard coded
         self.augment = augment
 
         if self.augment:
