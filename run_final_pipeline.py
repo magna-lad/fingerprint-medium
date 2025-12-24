@@ -3,12 +3,15 @@ import xgboost as xgb
 import torch
 import torch.nn as nn
 import os
+import random
 import matplotlib.pyplot as plt
 import gc 
 from tqdm import tqdm
 from sklearn.metrics import roc_curve, auc
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, WeightedRandomSampler
+from scipy.optimize import brentq
+from scipy.interpolate import interp1d
 
 # IMPORTS
 from graph_minutiae import GraphMinutiae
@@ -16,13 +19,31 @@ from load_save import load_users_dictionary
 from xgboost_feature_extractor import create_feature_vector_for_pair
 from cnn_model import DeeperCNN, FingerprintTextureDataset, EarlyStopping
 
+
+
+SEED = 42
+os.environ['PYTHONHASHSEED'] = str(SEED)
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
+
 # --- CONFIGURATION ---
 NUM_CNN_MODELS = 3      # Ensemble Size
 BATCH_SIZE = 64
 EPOCHS = 35             # Slightly reduced epochs since we train 3 models
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-DATA_FILE = 'processed_data.pkl' 
+DATA_FILE = '/kaggle/input/processed-data/processed_data.pkl' 
 OUTPUT_DIR = "."        # In Kaggle, this maps to /kaggle/working/
+
+def calculate_eer(y_true, y_probs):
+    fpr, tpr, thresholds = roc_curve(y_true, y_probs, pos_label=1)
+    eer = brentq(lambda x : 1. - x - interp1d(fpr, tpr)(x), 0., 1.)
+    return eer
+
 
 def prepare_xgb_features(pairs, desc):
     """Extracts geometric graph features for XGBoost."""
@@ -120,7 +141,7 @@ def run_hybrid_system():
     X_test = scaler.transform(X_test)
     
     xgb_model = xgb.XGBClassifier(n_estimators=600, max_depth=6, learning_rate=0.02, 
-                                  eval_metric='logloss', early_stopping_rounds=50, n_jobs=-1)
+                                  eval_metric='logloss', early_stopping_rounds=50, n_jobs=-1,random_state=SEED)
     xgb_model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
     
     # Store XGBoost Predictions
@@ -211,11 +232,14 @@ def run_hybrid_system():
     final_probs = (best_alpha * ensemble_test_probs) + ((1 - best_alpha) * xgb_test_probs)
     fpr_h, tpr_h, _ = roc_curve(y_test, final_probs)
     auc_h = auc(fpr_h, tpr_h)
+    # Calculate and print EER
+    final_eer = calculate_eer(y_test, final_probs)
     
     print("-" * 40)
     print(f"XGBoost Only AUC:     {auc_x:.4f}")
     print(f"CNN Ensemble AUC:     {auc_c:.4f}")
     print(f"FINAL HYBRID AUC:     {auc_h:.4f}")
+    print(f"FINAL HYBRID EER:     {final_eer:.4f}")
     print("-" * 40)
     
     try:
