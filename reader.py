@@ -49,7 +49,7 @@ def load_users(data_dir):
                 images.sort()
 
                 finger_groups = []
-            for finger_id in range(4):  # assuming 4 fingers per hand
+            for finger_id in range(4):  #  4 fingers per hand
                 start = finger_id * 5
                 end = start + 5
                 group = []

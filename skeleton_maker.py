@@ -12,6 +12,23 @@ from skimage.morphology import skeletonize as skelt
 
 
 
+
+
+##### trial
+import matplotlib.pyplot as plt
+from minutia_loader import minutiaLoader
+#from skeleton_maker import skeleton_maker
+from reader import load_users
+from tqdm import tqdm
+from minutiae_filter import minutiae_filter
+from load_save import *
+import numpy as np
+import cv2
+
+import matplotlib.pyplot as plt
+
+
+
 # will output the x,y,type and angle of the point minutia
 class skeleton_maker:
     def __init__(self,normalised_img,segmented_img, norm_img, mask,block):
@@ -103,33 +120,55 @@ class skeleton_maker:
         return smooth_angles    
     
 
-    # just to visualise the angles
-    def get_line_ends(self,i, j, tang):
-        if -1 <= tang and tang <= 1:
-            begin = (i, int((-self.block/2) * tang + j + self.block/2))
-            end = (i + self.block, int((self.block/2) * tang + j + self.block/2))
+    
+    def get_line_ends(self, i, j, tang):
+        # Calculate center point of the block
+        cx, cy = i + self.block // 2, j + self.block // 2
+        
+        if -1 <= tang <= 1:
+            begin = (int(cx - self.block/2), int(cy - (self.block/2) * tang))
+            end = (int(cx + self.block/2), int(cy + (self.block/2) * tang))
         else:
-            begin = (int(i + self.block/2 + self.block/(2 * tang)), j + self.block//2)
-            end = (int(i + self.block/2 - self.block/(2 * tang)), j - self.block//2)
+            begin = (int(cx + (self.block/2) / tang), int(cy - self.block/2))
+            end = (int(cx - (self.block/2) / tang), int(cy + self.block/2))
         return (begin, end)
 
-    # segmented_img-im
-    # mask-mask
-    # angle- angle_gabor
-    # w- self.block
     def visualize_angles(self):
         (y, x) = self.segmented_img.shape
-        result = cv2.cvtColor(np.zeros(self.segmented_img.shape, np.uint8), cv2.COLOR_GRAY2RGB)
-        mask_threshold = (self.segmented_img-1)**2
-        for i in range(1, x, self.block):
-            for j in range(1, y, self.block):
-                radian = np.sum(self.mask[j - 1:j + self.block, i-1:i+self.block])
-                if radian > mask_threshold:
-                    tang = math.tan(self.angle_gabor[(j - 1) // self.block][(i - 1) // self.block])
-                    (begin, end) = skeleton_maker.get_line_ends(i, j, tang)
-                    cv2.line(result, begin, end, color=150)
+        # Create a black background to draw orientation lines
+        result = cv2.cvtColor(np.zeros((y, x), np.uint8), cv2.COLOR_GRAY2RGB)
+        
+        # We check if a block has enough mask (foreground) to warrant drawing an angle
+        # 50% of block size is a good threshold
+        min_mask_sum = (self.block**2) * 0.5
 
-        cv2.resize(result, self.segmented_img.shape, result)
+        for j in range(0, y, self.block):
+            for i in range(0, x, self.block):
+                # Boundary check for the mask slice
+                mask_block = self.mask[j:min(j + self.block, y), i:min(i + self.block, x)]
+                radian = np.sum(mask_block)
+                
+                if radian > min_mask_sum:
+                    # Get indices for the angle grid
+                    row_idx = j // self.block
+                    col_idx = i // self.block
+                    
+                    # Safety check to ensure we don't index out of angle_gabor
+                    if row_idx < self.angle_gabor.shape[0] and col_idx < self.angle_gabor.shape[1]:
+                        angle = self.angle_gabor[row_idx][col_idx]
+                        
+                        # Only draw if angle isn't 0 (invalid)
+                        if angle != 0:
+                            tang = math.tan(angle)
+                            (begin, end) = self.get_line_ends(i, j, tang)
+                            # Draw line in Cyan/Red so it's clearly visible
+                            cv2.line(result, begin, end, color=(255, 0, 0), thickness=1)
+
+        plt.figure(figsize=(5, 5))
+        plt.imshow(result)
+        plt.title("Ridge Orientation Field")
+        plt.axis('off')
+        plt.show()
         return result
     
 
@@ -145,10 +184,10 @@ class skeleton_maker:
 
         for row in range(0, rows - self.block, self.block):
             for col in range(0, cols - self.block, self.block):
-                image_block = self.norm_img[row:row + self.block][:, col:col + self.block]
+                image_block = self.norm_img[row:row + self.block, col:col + self.block]  
                 angle_block = self.angle_gabor[row // self.block][col // self.block]
-                if angle_block:
-                    freq[row:row + self.block][:, col:col + self.block] = skeleton_maker.frequest(image_block, angle_block, kernel_size,minWaveLength, maxWaveLength)
+                if angle_block !=0:
+                    freq[row:row + self.block, col:col + self.block] = self.frequest(image_block, angle_block, kernel_size,minWaveLength, maxWaveLength)
 
         freq = freq*self.mask
         freq_1d = np.reshape(freq,(1,rows*cols))
@@ -253,8 +292,8 @@ class skeleton_maker:
         # Convert orientation matrix values from radians to an index value that corresponds to round(degrees/angleInc)
         maxorientindex = np.round(180/angleInc)
         orientindex = np.round(self.angle_gabor/np.pi*180/angleInc)
-        for i in range(0,rows//16):
-            for j in range(0,cols//16):
+        for i in range(0,rows//self.block):
+            for j in range(0,cols//self.block):
                 if(orientindex[i][j] < 1):
                     orientindex[i][j] = orientindex[i][j] + maxorientindex
                 if(orientindex[i][j] > maxorientindex):
@@ -263,16 +302,17 @@ class skeleton_maker:
         # Find indices of matrix points greater than maxsze from the image boundary
         block_size = int(block_size)
         valid_row, valid_col = np.where(self.freq>0)
-        finalind = \
-            np.where((valid_row>block_size) & (valid_row<rows - block_size) & (valid_col>block_size) & (valid_col<cols - block_size))
+        finalind = np.where((valid_row>block_size) & (valid_row<rows - block_size) & (valid_col>block_size) & (valid_col<cols - block_size))
 
         for k in range(0, np.shape(finalind)[1]):
             r = valid_row[finalind[0][k]]; c = valid_col[finalind[0][k]]
             img_block = im[r-block_size:r+block_size + 1][:,c-block_size:c+block_size + 1]
-            return_img[r][c] = np.sum(img_block * gabor_filter[int(orientindex[r//16][c//16]) - 1])
+            return_img[r][c] = np.sum(img_block * gabor_filter[int(orientindex[r//self.block][c//self.block]) - 1])
 
         gabor_img = 255 - np.array((return_img < 0)*255).astype(np.uint8)
         self.gabor_img = gabor_img
+
+        #plt.imshow(gabor_img)
         return gabor_img
     
     def skeletonize(self):
@@ -309,19 +349,18 @@ class skeleton_maker:
             for j in range(1, y - kernel_size//2):
                 minutiae = skeleton_maker.minutiae_at(biniry_image, j, i, kernel_size)
                 if minutiae != "none":
-                        cv2.circle(result, (i,j), radius=3, color=colors[minutiae], thickness=2)
-                        self.y_cord,self.x_cord = i,j
+                        cv2.circle(result, (i,j), radius=2, color=colors[minutiae], thickness=2)
+                        self.x_cord,self.y_cord = i,j
                         self.type = minutiae
                         # NEW
-                        self.angle_minutiae = self.angle_gabor[j // self.block][i // self.block] # to these coordinates of the image we will find the angle of orientation via sobel operators on the skeleton image
+                        self.angle_minutiae = np.degrees(self.angle_gabor[j // self.block][i // self.block]) # to these coordinates of the image we will find the angle of orientation via sobel operators on the skeleton image
                         length = 10  # length of angle line
-                        end_x = int(i + length * math.cos(self.angle_minutiae))
-                        end_y = int(j + length * math.sin(self.angle_minutiae))
-                        cv2.line(result, (i, j), (end_x, end_y), color=colors[minutiae], thickness=2)
-                        self.minutiae_list.append([self.y_cord,self.x_cord,self.type,self.angle_minutiae])
+                        end_x = int(i + length * math.cos(math.radians(self.angle_minutiae)))
+                        end_y = int(j + length * math.sin(math.radians(self.angle_minutiae)))
+                        cv2.line(result, (i, j), (end_x, end_y), color=colors[minutiae], thickness=1)
+                        self.minutiae_list.append([self.x_cord,self.y_cord,self.type,self.angle_minutiae])
 
         
-        #print(self.minutiae_list)
         self.with_minutiaes = result
         return result
     
@@ -408,16 +447,121 @@ class skeleton_maker:
     
 
     
+
+    
+
     def fingerprintPipeline(self):
        gabor_angles=self.angleCalculation()
        freq = self.ridge_freq()
        gbr_img = self.gabor_filter()
        img_thin = self.skeletonize()
        minutiaes= self.calculate_minutiaes()
-       #border_minutiaes_rmv = self.remove_near_border()
-       #plt.imshow(minutiaes)
-       #plt.imshow(minutiaes)
+       self.visualize_angles()
+       #plt.imshow(img)
+       #self.plot_orientation_field()
+       
+       
        plt.show()
        return  gabor_angles, freq, gbr_img, img_thin,minutiaes
+    
 
 
+# testing
+'''
+
+print('start')
+
+# --- TESTING BLOCK ---
+print('start')
+data_dir = r"C:\Users\kound\OneDrive\Desktop\figr\Figure_1.bmp"
+print(f"Loading: {data_dir}")
+
+img = cv2.imread(data_dir, 0) 
+
+if img is None:
+    print("Error: Could not find image. Check the path!")
+else:
+    print("Image loaded successfully. Processing...")
+    
+    # 1. Initialize Loader
+    fingerprint = minutiaLoader(img)
+
+    ## 2. Create the Figure and Subplots
+    ## (1 row, 4 columns)
+    #fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+#
+    ## Subplot 1: Original Image
+    #axes[0].imshow(img, cmap="gray")
+    #axes[0].set_title("Original Image")
+    #axes[0].axis('off')
+#
+    ## Subplot 2: Normalized
+    #axes[1].imshow(fingerprint.norm_img, cmap="gray")
+    #axes[1].set_title("Normalized")
+    #axes[1].axis('off')
+#
+    ## Subplot 3: Segmented (ROI)
+    #axes[2].imshow(fingerprint.segmented_img, cmap="gray")
+    #axes[2].set_title("Segmented ROI")
+    #axes[2].axis('off')
+#
+    ## Subplot 4: Mask
+    #axes[3].imshow(fingerprint.mask, cmap="gray")
+    #axes[3].set_title("Segmentation Mask")
+    #axes[3].axis('off')
+#
+    ## Finalize Layout
+    #plt.tight_layout()
+    #
+    #print("Opening display window...")
+    #plt.show() 
+    # 3. NOW UNCOMMENT AND RUN THE SKELETON PART
+    print("Starting Skeleton Processing...")
+    
+
+    # 2. Run Pipeline
+    skeleton_image = skeleton_maker(
+        fingerprint.normalised_img,
+        fingerprint.segmented_img,
+        fingerprint.norm_img,
+        fingerprint.mask,
+        fingerprint.block
+    )
+    
+    # Execute the heavy lifting
+    angles, freq, enhanced, thin, minu_viz = skeleton_image.fingerprintPipeline()
+
+    # 3. Create Clean Dashboard Visualization
+    plt.figure(figsize=(20, 10))
+
+    # --- Plot 1: Original ---
+    
+
+    # --- Plot 2: Enhanced (Gabor) ---
+    plt.subplot(1, 3, 1)
+    plt.imshow(enhanced, cmap='gray')
+    plt.title("1. Gabor Enhancement")
+    plt.axis('off') # <--- SWITCH OFF AXIS
+
+    # --- Plot 3: Skeleton ---
+    plt.subplot(1, 3, 2)
+    plt.imshow(thin, cmap='gray')
+    plt.title("2. Skeletonized")
+    plt.axis('off') # <--- SWITCH OFF AXIS
+
+    # --- Plot 4: Minutiae ---
+    plt.subplot(1, 3, 3)
+    plt.imshow(minu_viz)
+    plt.title("3. Detected Minutiae")
+    plt.axis('off') # <--- SWITCH OFF AXIS
+
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+    
+    # The pipeline has plt.show() inside it, or you can add it here again
+    plt.show()
+'''
