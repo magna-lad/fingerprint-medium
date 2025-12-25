@@ -57,7 +57,7 @@ pip install xgboost scikit-learn scipy scikit-image torch-geometric pandas
 
 # 🧠 Hybrid Fingerprint Matching Pipeline
 
-This project implements a **hybrid fingerprint matching system** that combines **geometric (minutiae-graph + XGBoost)** and **visual (CNN ensemble)** similarity scores using a **dynamic weighted score-level fusion** strategy, commonly used in multibiometric systems for improved robustness and accuracy [web:4][web:5].
+This project implements a **hybrid fingerprint matching system** that combines **geometric (minutiae-graph + XGBoost)** and **visual (CNN ensemble)** similarity scores using a **dynamic weighted score-level fusion** strategy, commonly used in multibiometric systems for improved robustness and accuracy.
 
 ---
 
@@ -79,7 +79,7 @@ Dataset_Root/
 ```
 
 
-Each subject directory (e.g., `001`, `002`) contains `L/` and `R/` folders for left and right hand fingerprint images respectively, which is a common organization pattern in fingerprint datasets [web:4].
+Each subject directory (e.g., `001`, `002`) contains `L/` and `R/` folders for left and right hand fingerprint images respectively, which is a common organization pattern in fingerprint datasets .
 
 ---
 
@@ -101,7 +101,7 @@ python main.py
 
 **Output:**
 
-- A file named `processed_data.pkl` will be created inside a `biometric_cache/` folder, acting as a preprocessed dataset cache similar to typical cached feature representations in ML pipelines [web:6][web:7].
+- A file named `processed_data.pkl` will be created inside a `biometric_cache/` folder, acting as a preprocessed dataset cache similar to typical cached feature representations in ML pipelines.
 
 ---
 
@@ -121,7 +121,7 @@ python run_final_pipeline.py
 ```
 
 
-This script trains the models and evaluates them on the validation/test split using ROC/AUC metrics, which are standard for biometric verification tasks [web:4][web:5].
+This script trains the models and evaluates them on the validation/test split using ROC/AUC metrics, which are standard for biometric verification tasks .
 
 ---
 
@@ -129,13 +129,13 @@ This script trains the models and evaluates them on the validation/test split us
 
 ### Geometric Score (\(P_{xgb}\))
 
-- Fingerprint **minutiae** are extracted and converted into graph-based representations, a classical approach in minutiae-based fingerprint recognition [web:2][web:4].
-- An **XGBoost** classifier estimates geometric similarity between a pair of minutiae graphs, leveraging gradient-boosted decision trees for discriminative scoring [web:3][web:8].
+- Fingerprint **minutiae** are extracted and converted into graph-based representations, a classical approach in minutiae-based fingerprint recognition.
+- An **XGBoost** classifier estimates geometric similarity between a pair of minutiae graphs, leveraging gradient-boosted decision trees for discriminative scoring.
 
 ### Visual Score (\(P_{cnn}\))
 
-- A **\(96 \times 96\)** patch centered at the fingerprint **core** is cropped as the visual region of interest, consistent with ROI-based CNN fingerprint processing [web:4][web:5].
-- An **ensemble of 3 CNNs** with **Spatial Transformer Networks (STN)** modules predicts similarity, improving robustness to small misalignments and local distortions [web:4][web:5].
+- A **\(96 \times 96\)** patch centered at the fingerprint **core** is cropped as the visual region of interest, consistent with ROI-based CNN fingerprint processing.
+- An **ensemble of 3 CNNs** with **Spatial Transformer Networks (STN)** modules predicts similarity, improving robustness to small misalignments and local distortions.
 
 ### Fusion Score
 
@@ -145,8 +145,8 @@ The final hybrid score is computed via weighted score-level fusion:
 \text{Score} = \alpha \cdot P_{cnn} + (1 - \alpha) \cdot P_{xgb}
 \]
 
-- The fusion strategy uses a **weighted sum**, a widely used rule in score-level fusion for multibiometric systems [web:4][web:5].
-- The weight \(\alpha\) is **dynamically optimized** on the validation set to maximize performance (e.g., AUC), aligning with common practices in adaptive fusion schemes [web:4].
+- The fusion strategy uses a **weighted sum**, a widely used rule in score-level fusion for multibiometric systems.
+- The weight \(\alpha\) is **dynamically optimized** on the validation set to maximize performance (e.g., AUC), aligning with common practices in adaptive fusion schemes.
 
 ---
 
@@ -158,7 +158,7 @@ Running `run_final_pipeline.py` produces:
 - AUC scores for:
  - XGBoost-only (geometric)
  - CNN-only (visual)
- - Hybrid (fused) model, reflecting the improvement from fusion [web:4][web:5].
+ - Hybrid (fused) model, reflecting the improvement from fusion .
 - **Plot:**
 - `kaggle_final_results.png` containing ROC curves for all three models.
 - **Models:**
@@ -166,7 +166,7 @@ Running `run_final_pipeline.py` produces:
  - `cnn_v0.pth`
  - `cnn_v1.pth`
  - `cnn_v2.pth`
-- These files can be reused for inference or fine-tuning, following standard PyTorch model serialization practice [web:6].
+- These files can be reused for inference or fine-tuning, following standard PyTorch model serialization practice.
 
 ---
 
@@ -174,9 +174,9 @@ Running `run_final_pipeline.py` produces:
 
 | Path / File                      | Description                                                        |
 |----------------------------------|--------------------------------------------------------------------|
-| `Dataset_Root/`                  | Root folder containing subject-wise fingerprint images [web:4].   |
-| `Dataset_Root/<ID>/L/`, `R/`     | Left/right hand fingerprint images for subject `<ID>` [web:4].    |
-| `biometric_cache/processed_data.pkl` | Cached preprocessed dataset for fast training runs [web:6][web:7]. |
+| `Dataset_Root/`                  | Root folder containing subject-wise fingerprint images.   |
+| `Dataset_Root/<ID>/L/`, `R/`     | Left/right hand fingerprint images for subject `<ID>`.    |
+| `biometric_cache/processed_data.pkl` | Cached preprocessed dataset for fast training runs |
 | `kaggle_final_results.png`       | ROC curve visualization of XGBoost, CNN, and Hybrid models.       |
 | `cnn_v0.pth`, `cnn_v1.pth`, ...  | Saved CNN model checkpoints for later reuse.                      |
 
@@ -191,7 +191,7 @@ pip install torch torchvision xgboost numpy pandas scikit-learn matplotlib
 ```
 
 
-Depending on your environment, additional packages for data loading, image processing, or augmentation may be needed (e.g., `opencv-python`, `tqdm`) similar to typical deep learning pipelines [web:6][web:9].
+Depending on your environment, additional packages for data loading, image processing, or augmentation may be needed (e.g., `opencv-python`, `tqdm`) similar to typical deep learning pipelines.
 
 ---
 
@@ -201,5 +201,5 @@ Depending on your environment, additional packages for data loading, image proce
 - For deployment or large-scale experiments, consider:
   - GPU acceleration for CNN training.
   - Parallel data loading and caching strategies.
-  - Tuning \(\alpha\), thresholds, and ROC operating points for the target application [web:4][web:5].
+  - Tuning \(\alpha\), thresholds, and ROC operating points for the target application.
 
