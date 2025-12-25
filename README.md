@@ -54,3 +54,152 @@ The project is divided into processing, feature extraction, and model training m
 pip install numpy opencv-python matplotlib tqdm torch torchvision torchaudio
 pip install xgboost scikit-learn scipy scikit-image torch-geometric pandas
 ```
+
+# 🧠 Hybrid Fingerprint Matching Pipeline
+
+This project implements a **hybrid fingerprint matching system** that combines **geometric (minutiae-graph + XGBoost)** and **visual (CNN ensemble)** similarity scores using a **dynamic weighted score-level fusion** strategy, commonly used in multibiometric systems for improved robustness and accuracy [web:4][web:5].
+
+---
+
+## 🚀 Usage
+
+### 1. Data Setup
+
+Organize your dataset in the following structure:
+
+```
+Dataset_Root/
+├── 001/
+│ ├── L/ # Left hand images
+│ └── R/ # Right hand images
+├── 002/
+│ ├── L/
+│ └── R/
+...
+```
+
+
+Each subject directory (e.g., `001`, `002`) contains `L/` and `R/` folders for left and right hand fingerprint images respectively, which is a common organization pattern in fingerprint datasets [web:4].
+
+---
+
+### 2. Preprocessing (Cache Generation)
+
+This step is **computationally expensive**, so it is designed to be run once to generate a cache file for faster repeated training.
+
+1. Open `main.py`.
+2. Set the dataset root path:
+```
+data_dir = r"/path/to/your/dataset"
+```
+
+3. Run:
+```
+python main.py
+```
+
+
+**Output:**
+
+- A file named `processed_data.pkl` will be created inside a `biometric_cache/` folder, acting as a preprocessed dataset cache similar to typical cached feature representations in ML pipelines [web:6][web:7].
+
+---
+
+### 3. Training & Inference
+
+1. Open `run_final_pipeline.py`.
+2. Point `DATA_FILE` to the cache file:
+
+```
+DATA_FILE = 'biometric_cache/processed_data.pkl'
+```
+
+3. Run the full pipeline:
+
+```
+python run_final_pipeline.py
+```
+
+
+This script trains the models and evaluates them on the validation/test split using ROC/AUC metrics, which are standard for biometric verification tasks [web:4][web:5].
+
+---
+
+## 📊 Pipeline Logic
+
+### Geometric Score (\(P_{xgb}\))
+
+- Fingerprint **minutiae** are extracted and converted into graph-based representations, a classical approach in minutiae-based fingerprint recognition [web:2][web:4].
+- An **XGBoost** classifier estimates geometric similarity between a pair of minutiae graphs, leveraging gradient-boosted decision trees for discriminative scoring [web:3][web:8].
+
+### Visual Score (\(P_{cnn}\))
+
+- A **\(96 \times 96\)** patch centered at the fingerprint **core** is cropped as the visual region of interest, consistent with ROI-based CNN fingerprint processing [web:4][web:5].
+- An **ensemble of 3 CNNs** with **Spatial Transformer Networks (STN)** modules predicts similarity, improving robustness to small misalignments and local distortions [web:4][web:5].
+
+### Fusion Score
+
+The final hybrid score is computed via weighted score-level fusion:
+
+\[
+\text{Score} = \alpha \cdot P_{cnn} + (1 - \alpha) \cdot P_{xgb}
+\]
+
+- The fusion strategy uses a **weighted sum**, a widely used rule in score-level fusion for multibiometric systems [web:4][web:5].
+- The weight \(\alpha\) is **dynamically optimized** on the validation set to maximize performance (e.g., AUC), aligning with common practices in adaptive fusion schemes [web:4].
+
+---
+
+## 📉 Outputs
+
+Running `run_final_pipeline.py` produces:
+
+- **Console:**
+- AUC scores for:
+ - XGBoost-only (geometric)
+ - CNN-only (visual)
+ - Hybrid (fused) model, reflecting the improvement from fusion [web:4][web:5].
+- **Plot:**
+- `kaggle_final_results.png` containing ROC curves for all three models.
+- **Models:**
+- Best CNN weights saved as:
+ - `cnn_v0.pth`
+ - `cnn_v1.pth`
+ - `cnn_v2.pth`
+- These files can be reused for inference or fine-tuning, following standard PyTorch model serialization practice [web:6].
+
+---
+
+## 📁 Folder & File Overview
+
+| Path / File                      | Description                                                        |
+|----------------------------------|--------------------------------------------------------------------|
+| `Dataset_Root/`                  | Root folder containing subject-wise fingerprint images [web:4].   |
+| `Dataset_Root/<ID>/L/`, `R/`     | Left/right hand fingerprint images for subject `<ID>` [web:4].    |
+| `biometric_cache/processed_data.pkl` | Cached preprocessed dataset for fast training runs [web:6][web:7]. |
+| `kaggle_final_results.png`       | ROC curve visualization of XGBoost, CNN, and Hybrid models.       |
+| `cnn_v0.pth`, `cnn_v1.pth`, ...  | Saved CNN model checkpoints for later reuse.                      |
+
+---
+
+## 🛠 Dependencies
+
+Install required dependencies (example):
+
+```
+pip install torch torchvision xgboost numpy pandas scikit-learn matplotlib
+```
+
+
+Depending on your environment, additional packages for data loading, image processing, or augmentation may be needed (e.g., `opencv-python`, `tqdm`) similar to typical deep learning pipelines [web:6][web:9].
+
+---
+
+## 📚 Notes
+
+- This pipeline is suitable for **research on hybrid fingerprint matching** and **score-level fusion** in biometrics.
+- For deployment or large-scale experiments, consider:
+  - GPU acceleration for CNN training.
+  - Parallel data loading and caching strategies.
+  - Tuning \(\alpha\), thresholds, and ROC operating points for the target application [web:4][web:5].
+
