@@ -59,8 +59,8 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
     
     model = DeeperCNN().to(DEVICE)
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-3, epochs=EPOCHS, steps_per_epoch=len(train_loader))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=2e-3, epochs=EPOCHS, steps_per_epoch=len(train_loader))
     
     save_path = os.path.join(OUTPUT_DIR, f'cnn_v{model_idx}.pth')
     stopper = EarlyStopping(patience=8, path=save_path)
@@ -77,6 +77,7 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
             logits = model(img1, img2)
             loss = criterion(logits, label)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # stopping exploding gradients
             optimizer.step()
             scheduler.step()
             t_loss += loss.item()

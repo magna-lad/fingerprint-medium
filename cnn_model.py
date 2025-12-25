@@ -170,7 +170,7 @@ class DeeperCNN(nn.Module):
             nn.Linear(256, 256),
             nn.BatchNorm1d(256),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.3) 
+            nn.Dropout(0.5) 
         )
         
         self.classifier = nn.Sequential(
