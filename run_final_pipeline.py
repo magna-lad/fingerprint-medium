@@ -36,7 +36,7 @@ NUM_CNN_MODELS = 3      # Ensemble Size
 BATCH_SIZE = 64
 EPOCHS = 35             # Slightly reduced epochs since we train 3 models
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-DATA_FILE = '/kaggle/input/processed/kaggle/working/biometric_cache/processed_data.pkl' 
+DATA_FILE = '/kaggle/input/processed-data/processed_data.pkl' 
 OUTPUT_DIR = "."        # In Kaggle, this maps to /kaggle/working/
 
 def calculate_eer(y_true, y_probs):
@@ -59,8 +59,8 @@ def train_one_cnn_model(model_idx, train_loader, val_loader):
     
     model = DeeperCNN().to(DEVICE)
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-3)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=5e-4, epochs=EPOCHS, steps_per_epoch=len(train_loader))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=2e-3, epochs=EPOCHS, steps_per_epoch=len(train_loader))
     
     save_path = os.path.join(OUTPUT_DIR, f'cnn_v{model_idx}.pth')
     stopper = EarlyStopping(patience=8, path=save_path)

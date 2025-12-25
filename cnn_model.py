@@ -10,17 +10,18 @@ class FingerprintTextureDataset(Dataset):
     def __init__(self, pairs, core_finder_func, augment=False):
         self.pairs = pairs
         self.core_finder = core_finder_func 
-        self.img_size = 96 
+        # Resolution must be 96 for the STN calculations below
+        self.img_size = 96 # hard coded
         self.augment = augment
 
         if self.augment:
             self.transform = transforms.Compose([
                 transforms.ToPILImage(),
-                transforms.RandomRotation(degrees=45), # Slightly increased rotation
+                transforms.RandomRotation(degrees=30),
                 transforms.RandomAffine(
                     degrees=0, 
-                    translate=(0.15, 0.15), 
-                    scale=(0.85, 1.15),
+                    translate=(0.1, 0.1), 
+                    scale=(0.9, 1.1),
                     shear=10
                 ),
                 transforms.ToTensor()
@@ -35,8 +36,6 @@ class FingerprintTextureDataset(Dataset):
         if img_data is None or img_data.size == 0:
             return np.zeros((self.img_size, self.img_size), dtype=np.float32)
 
-        # FIX 1: Safety check for NaNs/Infs in raw data which cause explosions
-        img_data = np.nan_to_num(img_data, nan=0.0, posinf=255.0, neginf=0.0)
         img_data = img_data.astype(np.float32)
         
         # Inversion Fix
@@ -93,37 +92,38 @@ class FingerprintTextureDataset(Dataset):
         
         return img1, img2, torch.tensor(label, dtype=torch.float32)
 
+# --- NEW STN MODULE ---
 class STN_Module(nn.Module):
     def __init__(self):
         super(STN_Module, self).__init__()
         # Localization net
         self.localization = nn.Sequential(
-            nn.Conv2d(1, 8, kernel_size=7),
-            nn.MaxPool2d(2, stride=2),
-            nn.BatchNorm2d(8),               # Keep BN
-            nn.LeakyReLU(0.1, inplace=True), # Keep LeakyReLU
-            nn.Conv2d(8, 10, kernel_size=5),
-            nn.MaxPool2d(2, stride=2),
-            nn.BatchNorm2d(10),              # Keep BN
-            nn.LeakyReLU(0.1, inplace=True)  # Keep LeakyReLU
+            nn.Conv2d(1, 8, kernel_size=7),    # 96 -> 90
+            nn.MaxPool2d(2, stride=2),         # 90 -> 45
+            nn.ReLU(True),
+            nn.Conv2d(8, 10, kernel_size=5),   # 45 -> 41
+            nn.MaxPool2d(2, stride=2),         # 41 -> 20
+            nn.ReLU(True)
         )
         
-        # Regressor
+        # Regressor for the 3 * 2 affine matrix
+        # Input size calculation: 10 channels * 20 height * 20 width = 4000
         self.fc_loc = nn.Sequential(
-            nn.Linear(10 * 20 * 20, 32), 
-            nn.LeakyReLU(0.1, inplace=True), # LeakyReLU
+            nn.Linear(10 * 20 * 20, 32), # CORRECTED SIZE FOR 96x96 IMAGES
+            nn.ReLU(True),
             nn.Linear(32, 3 * 2)
         )
         
-        # Initialize
+        # Initialize the weights/bias with identity transformation
         self.fc_loc[2].weight.data.zero_()
         self.fc_loc[2].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
 
     def forward(self, x):
         xs = self.localization(x)
-        xs = xs.view(-1, 10 * 20 * 20)
+        xs = xs.view(-1, 10 * 20 * 20) # Flatten
         theta = self.fc_loc(xs)
         theta = theta.view(-1, 2, 3)
+        
         grid = F.affine_grid(theta, x.size(), align_corners=True)
         x = F.grid_sample(x, grid, align_corners=True)
         return x
@@ -154,6 +154,7 @@ class DeeperCNN(nn.Module):
     def __init__(self):
         super(DeeperCNN, self).__init__()
         
+        # --- INTEGRATE STN HERE ---
         self.stn = STN_Module()
         
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
@@ -172,11 +173,8 @@ class DeeperCNN(nn.Module):
             nn.Dropout(0.5) 
         )
         
-        # FIX 2: Adjusted Input Size to 512 (256*2)
-        # Because we dropped one concatenation and switched to math ops
         self.classifier = nn.Sequential(
-            nn.Linear(256 * 2, 128),
-            nn.BatchNorm1d(128), # Added BN here for extra stability
+            nn.Linear(256 * 3, 128),
             nn.LeakyReLU(0.1), 
             nn.Dropout(0.5),
             nn.Linear(128, 1)
@@ -189,7 +187,9 @@ class DeeperCNN(nn.Module):
         )
 
     def forward_one(self, x):
+        # --- APPLY STN BEFORE CNN ---
         x = self.stn(x)
+        
         x = F.leaky_relu(self.bn1(self.conv1(x)), 0.1)
         x = self.layer1(x)
         x = self.layer2(x)
@@ -197,19 +197,14 @@ class DeeperCNN(nn.Module):
         x = self.avg_pool(x)
         x = x.view(x.size(0), -1)
         x = self.embedder(x)
-        return F.normalize(x, p=2, dim=1) # Keep Normalize!
+        return F.normalize(x, p=2, dim=1)
 
     def forward(self, img1, img2):
         emb1 = self.forward_one(img1)
         emb2 = self.forward_one(img2)
         
-        # FIX 3: Gradient Smoothing
-        # Replaced abs() with pow(2) to prevent oscillation at 0
-        diff = torch.pow(emb1 - emb2, 2) 
-        mult = emb1 * emb2
-        
-        # Combined size is now 256 + 256 = 512
-        combined = torch.cat((diff, mult), dim=1)
+        diff = torch.abs(emb1 - emb2)
+        combined = torch.cat((emb1, emb2, diff), dim=1)
         
         logits = self.classifier(combined)
         return logits.squeeze()
