@@ -5,6 +5,8 @@ This project implements a multi-modal biometric authentication system that fuses
 ## 📂 Project Structure
 
 The project is divided into processing, feature extraction, and model training modules.
+### Project Architecture
+![Demo Image](utils\architecture.png)
 
 ### 1. Core Execution
 *   **`main.py`**
@@ -151,6 +153,7 @@ The final hybrid score is computed via weighted score-level fusion:
 ---
 
 ## 📉 Outputs
+![Demo Image](utils\Results.png)
 
 Running `run_final_pipeline.py` produces:
 
