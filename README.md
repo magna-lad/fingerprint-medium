@@ -187,22 +187,11 @@ Running `run_final_pipeline.py` produces:
 
 ## 🛠 Dependencies
 
-Install required dependencies (example):
+Install required dependencies :
 
 ```
 pip install torch torchvision xgboost numpy pandas scikit-learn matplotlib
 ```
 
 
-Depending on your environment, additional packages for data loading, image processing, or augmentation may be needed (e.g., `opencv-python`, `tqdm`) similar to typical deep learning pipelines.
-
----
-
-## 📚 Notes
-
-- This pipeline is suitable for **research on hybrid fingerprint matching** and **score-level fusion** in biometrics.
-- For deployment or large-scale experiments, consider:
-  - GPU acceleration for CNN training.
-  - Parallel data loading and caching strategies.
-  - Tuning \(\alpha\), thresholds, and ROC operating points for the target application.
-
+Depending on your environment, additional packages for data loading, image processing, or augmentation may be needed (e.g., `opencv-python`, `tqdm`).
