@@ -153,7 +153,7 @@ The final hybrid score is computed via weighted score-level fusion:
 ---
 
 ## 📉 Outputs
-![Demo Image](utils\Results.png)
+![Demo Image](https://github.com/magna-lad/fingerprint_feature_extraction_recognition/blob/main/utils/Results.png)
 
 Running `run_final_pipeline.py` produces:
 
