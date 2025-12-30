@@ -6,7 +6,7 @@ This project implements a multi-modal biometric authentication system that fuses
 
 The project is divided into processing, feature extraction, and model training modules.
 ### Project Architecture
-![Demo Image](utils\architecture.png)
+![Demo Image](https://github.com/magna-lad/fingerprint_feature_extraction_recognition/blob/main/utils/architecture.png)
 
 ### 1. Core Execution
 *   **`main.py`**
